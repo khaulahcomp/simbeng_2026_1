@@ -1,0 +1,7 @@
+# Folder unggahan: JANGAN eksekusi skrip apa pun di sini.
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|phar|pl|py|cgi|sh|asp|aspx)$">
+  Require all denied
+</FilesMatch>
+php_flag engine off
+AddType text/plain .php .phtml .phar
+Options -ExecCGI -Indexes
