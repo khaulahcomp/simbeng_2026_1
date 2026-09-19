@@ -41,6 +41,16 @@ function run_full_migration(): void {
         role VARCHAR(20) NOT NULL DEFAULT 'kasir',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) $eng");
+    // OTP Google Authenticator (TOTP) - opsional per pengguna.
+    if (!column_exists($db, 'users', 'totp_secret')) {
+        $db->exec("ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64) NULL AFTER password_hash");
+    }
+    if (!column_exists($db, 'users', 'totp_enabled')) {
+        $db->exec("ALTER TABLE users ADD COLUMN totp_enabled TINYINT(1) NOT NULL DEFAULT 0 AFTER totp_secret");
+    }
+    if (!column_exists($db, 'users', 'totp_recovery_codes')) {
+        $db->exec("ALTER TABLE users ADD COLUMN totp_recovery_codes TEXT NULL AFTER totp_enabled");
+    }
 
     $db->exec("CREATE TABLE IF NOT EXISTS customers (
         id INT AUTO_INCREMENT PRIMARY KEY,
