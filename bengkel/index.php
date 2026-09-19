@@ -9,6 +9,7 @@ ob_start();
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/csrf.php';
+require_once __DIR__ . '/includes/totp.php';
 
 init_db();
 send_security_headers();
@@ -51,6 +52,7 @@ $routes = [
     'users'          => 'Manajemen Pengguna',
     'settings'       => 'Pengaturan',
     'notes'          => 'Catatan',
+    'profile'        => 'Keamanan Akun',
 ];
 if (!isset($routes[$page])) $page = 'dashboard';
 
