@@ -46,6 +46,16 @@ Jalankan sekali setelah `config.php` diarahkan ke database MySQL tujuan.
 
 Segera ganti password melalui menu **Pengguna** setelah login pertama. Tabel database & akun admin dibuat otomatis saat aplikasi pertama kali diakses.
 
+## Keamanan: OTP Google Authenticator (2FA)
+Setiap pengguna dapat mengaktifkan verifikasi 2 langkah (TOTP, kompatibel dengan Google Authenticator/Authy/Microsoft Authenticator) melalui menu **Keamanan Akun**:
+1. Login seperti biasa, lalu buka menu **Keamanan Akun**.
+2. Scan kode QR yang tampil dengan aplikasi Authenticator (atau masukkan kunci manual).
+3. Masukkan 6 digit kode untuk mengonfirmasi & mengaktifkan.
+4. Simpan **kode cadangan** yang ditampilkan sekali saat aktivasi — dipakai untuk login bila HP hilang/rusak.
+
+Setelah aktif, login akan meminta kode 6 digit tambahan setelah username/password benar. Implementasi TOTP murni PHP (tanpa Composer/API pihak ketiga) ada di `includes/totp.php`; secret & kode cadangan tersimpan ter-hash di database, tidak pernah dalam bentuk teks biasa.
+
+Bila pengguna kehilangan akses ke aplikasi Authenticator dan kode cadangan, **admin** dapat mereset OTP pengguna tersebut lewat menu **Pengguna** (tombol reset OTP pada baris pengguna yang bersangkutan) — pengguna kemudian dapat mengaktifkan ulang OTP dengan perangkat baru.
 
 ## Struktur Folder
 ```
@@ -55,11 +65,12 @@ bengkel/
 ├── includes/
 │   ├── db.php           # Koneksi + skema database + helper
 │   ├── auth.php         # Manajemen sesi login
+│   ├── totp.php         # OTP Google Authenticator (TOTP, tanpa dependensi)
 │   ├── header.php       # Layout + sidebar
 │   └── footer.php
 ├── pages/               # Halaman: login, dashboard, customers, parts,
 │                        # stock, pos, receipt, transactions, suppliers,
-│                        # warranty, warranty_print, users
+│                        # warranty, warranty_print, users, profile (2FA)
 └── ajax/                # Endpoint JSON (lookup kendaraan, cari nota, import Excel)
 ```
 
@@ -71,4 +82,5 @@ bengkel/
 - **Kasir/POS**: pilih pelanggan & kendaraan, item jasa + sparepart, stok berkurang otomatis, cetak struk nota.
 - **Supplier**: CRUD data supplier.
 - **Klaim Garansi**: kode otomatis (GRS-YYYYMM-NNN), pencarian nota, pengajuan klaim, update status (pending/diproses/disetujui/ditolak), penggantian part otomatis mengurangi stok, cetak bukti klaim.
-- **Pengguna**: manajemen multi-user dengan role admin/kasir/mekanik (khusus admin).
+- **Pengguna**: manajemen multi-user dengan role admin/kasir/mekanik (khusus admin), termasuk melihat status & reset OTP pengguna.
+- **Keamanan Akun**: aktivasi/nonaktivasi OTP Google Authenticator (2FA) mandiri per pengguna + kode cadangan.
