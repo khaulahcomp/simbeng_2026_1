@@ -43,6 +43,15 @@ if ($action === 'delete') {
     header('Location: index.php?page=users'); exit;
 }
 
+// ---- Reset OTP pengguna lain (mis. HP hilang) ----
+if ($action === 'reset_2fa') {
+    $id = (int)$_POST['id'];
+    $db->prepare("UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_recovery_codes = NULL WHERE id=?")->execute([$id]);
+    if (function_exists('app_log')) app_log('auth', 'OTP direset oleh admin=' . $me['username'] . ' untuk user_id=' . $id);
+    set_flash('success', 'OTP pengguna dinonaktifkan. Pengguna dapat mengaktifkan ulang lewat menu Keamanan Akun.');
+    header('Location: index.php?page=users'); exit;
+}
+
 $rows = $db->query("SELECT * FROM users ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
 $edit = null;
 if (isset($_GET['edit'])) {
@@ -78,16 +87,29 @@ if (isset($_GET['edit'])) {
     <div class="card table-card"><div class="card-body">
       <div class="table-responsive">
       <table class="table table-sm align-middle" data-testid="users-table">
-        <thead><tr><th>Username</th><th>Nama</th><th>Role</th><th>Dibuat</th><th class="text-end">Aksi</th></tr></thead>
+        <thead><tr><th>Username</th><th>Nama</th><th>Role</th><th>OTP</th><th>Dibuat</th><th class="text-end">Aksi</th></tr></thead>
         <tbody>
         <?php foreach ($rows as $r): ?>
           <tr>
             <td><?= esc($r['username']) ?><?= $r['id']==$me['id'] ? ' <span class="badge bg-primary">Anda</span>' : '' ?></td>
             <td><?= esc($r['nama']) ?></td>
             <td><span class="badge bg-<?= $r['role']==='admin'?'danger':($r['role']==='kasir'?'success':'secondary') ?>"><?= esc($r['role']) ?></span></td>
+            <td>
+              <?php if (!empty($r['totp_enabled'])): ?>
+              <span class="badge bg-success" data-testid="user-otp-status-<?= $r['id'] ?>"><i class="bi bi-shield-lock-fill"></i> Aktif</span>
+              <?php else: ?>
+              <span class="badge bg-secondary" data-testid="user-otp-status-<?= $r['id'] ?>">Nonaktif</span>
+              <?php endif; ?>
+            </td>
             <td class="small"><?= esc($r['created_at']) ?></td>
             <td class="text-end text-nowrap">
               <a class="btn btn-sm btn-outline-primary" href="index.php?page=users&edit=<?= $r['id'] ?>" data-testid="user-edit-<?= $r['id'] ?>"><i class="bi bi-pencil"></i></a>
+              <?php if (!empty($r['totp_enabled'])): ?>
+              <form method="post" class="d-inline" onsubmit="return confirm('Nonaktifkan OTP pengguna ini? Gunakan hanya bila HP/akses authenticator pengguna hilang.')">
+                <input type="hidden" name="action" value="reset_2fa"><input type="hidden" name="id" value="<?= $r['id'] ?>">
+                <button class="btn btn-sm btn-outline-warning" title="Reset OTP" data-testid="user-reset2fa-<?= $r['id'] ?>"><i class="bi bi-shield-x"></i></button>
+              </form>
+              <?php endif; ?>
               <?php if ($r['id'] != $me['id']): ?>
               <form method="post" class="d-inline" onsubmit="return confirm('Hapus pengguna ini?')">
                 <input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= $r['id'] ?>">
