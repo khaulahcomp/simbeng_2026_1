@@ -23,7 +23,7 @@ date_default_timezone_set('Asia/Jakarta');
 // Versi skema aplikasi. Naikkan nilai ini bila ada perubahan
 // struktur/index agar migrasi dijalankan ulang SEKALI saja
 // (bukan pada tiap request pengguna).
-const APP_SCHEMA_VERSION = '2026.06.20.2';
+const APP_SCHEMA_VERSION = '2026.09.19.1';
 
 function db_config(): array {
     static $cfg = null;
@@ -145,6 +145,7 @@ function bengkel_nav_items(): array {
         ['suppliers', 'index.php?page=suppliers', 'bi-truck', 'Supplier', false],
         ['warranty', 'index.php?page=warranty', 'bi-shield-check', 'Klaim Garansi', false],
         ['notes', 'index.php?page=notes', 'bi-sticky', 'Catatan', false],
+        ['profile', 'index.php?page=profile', 'bi-shield-lock', 'Keamanan Akun', false],
         ['users', 'index.php?page=users', 'bi-person-gear', 'Pengguna', true],
         ['settings', 'index.php?page=settings', 'bi-sliders', 'Pengaturan', true],
     ];
