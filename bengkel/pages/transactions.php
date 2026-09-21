@@ -1,8 +1,14 @@
 <?php
 $db = db();
+$is_admin = ((current_user()['role'] ?? '') === 'admin');
 
 // ---- Hapus transaksi: stok sparepart dikembalikan, jejak pergerakan dihapus ----
+// Hanya role admin yang boleh menghapus transaksi (kasir/mekanik hanya Cetak Nota).
 if (($_POST['action'] ?? '') === 'delete') {
+    if (!$is_admin) {
+        set_flash('danger', 'Akses ditolak. Hapus transaksi hanya untuk role admin.');
+        header('Location: index.php?page=transactions'); exit;
+    }
     $id = (int)$_POST['id'];
     // Tolak hapus bila ada klaim garansi yang terkait transaksi ini
     $klaim = $db->prepare("SELECT COUNT(*) FROM warranty_claims WHERE transaction_id=?");
@@ -70,11 +76,13 @@ $total = array_sum(array_column($rows, 'grand_total'));
         <td class="small"><?= esc(lokal($r['created_at'])) ?></td>
         <td class="text-end text-nowrap">
           <a class="btn btn-sm btn-outline-primary" href="index.php?page=receipt&id=<?= $r['id'] ?>" title="Cetak Nota" data-testid="trx-receipt-<?= $r['id'] ?>"><i class="bi bi-printer"></i></a>
+          <?php if ($is_admin): ?>
           <a class="btn btn-sm btn-outline-warning" href="index.php?page=pos&edit=<?= $r['id'] ?>" title="Edit Transaksi" data-testid="trx-edit-<?= $r['id'] ?>"><i class="bi bi-pencil"></i></a>
           <form method="post" class="d-inline" onsubmit="return confirm('Hapus transaksi ini? Stok sparepart yang terpakai akan dikembalikan.')">
             <input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= $r['id'] ?>">
             <button class="btn btn-sm btn-outline-danger" title="Hapus Transaksi" data-testid="trx-delete-<?= $r['id'] ?>"><i class="bi bi-trash"></i></button>
           </form>
+          <?php endif; ?>
         </td>
       </tr>
     <?php endforeach; ?>

@@ -4,6 +4,11 @@ $db = db();
 // ---- Simpan transaksi servis / penjualan (baru atau edit) ----
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_trx') {
     $edit_id     = (int)($_POST['edit_id'] ?? 0);
+    // Hanya role admin yang boleh menyimpan perubahan (mode edit) transaksi lama.
+    if ($edit_id && (current_user()['role'] ?? '') !== 'admin') {
+        set_flash('danger', 'Akses ditolak. Edit transaksi hanya untuk role admin.');
+        header('Location: index.php?page=transactions'); exit;
+    }
     $customer_id = (int)$_POST['customer_id'];
     $vehicle_id  = (int)($_POST['vehicle_id'] ?? 0) ?: null;
     $jasa_nama   = $_POST['jasa_nama'] ?? [];
@@ -147,6 +152,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 $edit_trx = null;
 $edit_items = [];
 if (isset($_GET['edit'])) {
+    // Hanya role admin yang boleh membuka form transaksi dalam mode edit.
+    if ((current_user()['role'] ?? '') !== 'admin') {
+        set_flash('danger', 'Akses ditolak. Edit transaksi hanya untuk role admin.');
+        header('Location: index.php?page=transactions'); exit;
+    }
     $eid = (int)$_GET['edit'];
     $s = $db->prepare("SELECT * FROM transactions WHERE id=?");
     $s->execute([$eid]);
