@@ -1,10 +1,17 @@
 <?php
 $db = db();
 $action = $_POST['action'] ?? '';
+$is_admin = ((current_user()['role'] ?? '') === 'admin');
 
 // ---- Simpan (tambah / edit) sparepart ----
 if ($action === 'save') {
     $id = (int)($_POST['id'] ?? 0);
+    // Hanya role admin yang boleh mengedit sparepart yang sudah ada.
+    // Tambah sparepart baru (id=0) tetap diizinkan untuk semua role, tidak diubah.
+    if ($id && !$is_admin) {
+        set_flash('danger', 'Akses ditolak. Edit sparepart hanya untuk role admin.');
+        header('Location: index.php?page=parts'); exit;
+    }
     $kode = strtoupper(trim($_POST['kode'] ?? ''));
     $kategori = trim($_POST['kategori'] ?? '');
     // Kategori baru (mis. hasil auto-fill dari hargasukucadang.online) otomatis
@@ -41,6 +48,11 @@ if ($action === 'save') {
     header('Location: index.php?page=parts'); exit;
 }
 if ($action === 'delete') {
+    // Hanya role admin yang boleh menghapus sparepart.
+    if (!$is_admin) {
+        set_flash('danger', 'Akses ditolak. Hapus sparepart hanya untuk role admin.');
+        header('Location: index.php?page=parts'); exit;
+    }
     $db->prepare("DELETE FROM parts WHERE id=?")->execute([(int)$_POST['id']]);
     set_flash('success', 'Sparepart dihapus.');
     header('Location: index.php?page=parts'); exit;
@@ -82,6 +94,11 @@ $paginate_url = function ($p) use ($q, $filter, $per_page) {
 
 $edit = null;
 if (isset($_GET['edit'])) {
+    // Hanya role admin yang boleh membuka form edit sparepart.
+    if (!$is_admin) {
+        set_flash('danger', 'Akses ditolak. Edit sparepart hanya untuk role admin.');
+        header('Location: index.php?page=parts'); exit;
+    }
     $s = $db->prepare("SELECT * FROM parts WHERE id=?"); $s->execute([(int)$_GET['edit']]);
     $edit = $s->fetch(PDO::FETCH_ASSOC);
 }
@@ -305,11 +322,15 @@ $import_logs = $db->query("SELECT * FROM import_logs ORDER BY id DESC LIMIT 20")
             <td class="text-end"><?= rupiah($r['harga_jual']) ?></td>
             <td class="text-end"><span class="badge bg-<?= $low ? 'danger' : 'success' ?>" data-testid="part-stok-badge-<?= $r['id'] ?>"><?= $r['stok'] ?></span></td>
             <td class="text-end text-nowrap">
+              <?php if ($is_admin): ?>
               <a class="btn btn-sm btn-outline-primary" href="index.php?page=parts&edit=<?= $r['id'] ?>" data-testid="part-edit-<?= $r['id'] ?>"><i class="bi bi-pencil"></i></a>
               <form method="post" class="d-inline" onsubmit="return confirm('Hapus sparepart ini?')">
                 <input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= $r['id'] ?>">
                 <button class="btn btn-sm btn-outline-danger" data-testid="part-delete-<?= $r['id'] ?>"><i class="bi bi-trash"></i></button>
               </form>
+              <?php else: ?>
+              <span class="text-muted small">-</span>
+              <?php endif; ?>
             </td>
           </tr>
         <?php endforeach; ?>

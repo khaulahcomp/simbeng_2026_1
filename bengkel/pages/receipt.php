@@ -202,9 +202,6 @@ $stempel_ok  = $stempel_img && is_file(__DIR__ . '/../' . $stempel_img);
           <?php else: ?>
             <?= esc($it['nama']) ?>
           <?php endif; ?>
-          <?php if ($it['tipe'] === 'part' && (float)($it['special_price'] ?? 0) > 0): ?>
-            <span class="badge bg-warning text-dark" style="font-size:9px">Special Price</span>
-          <?php endif; ?>
           <?php if ((int)$it['garansi_hari'] > 0): ?>
             <div style="font-size:9.5px;color:#555">Garansi <?= (int)$it['garansi_hari'] ?> hari s.d. <?= date('d/m/Y', strtotime(lokal($t['created_at'], 'Y-m-d') . " +{$it['garansi_hari']} days")) ?></div>
           <?php endif; ?>
