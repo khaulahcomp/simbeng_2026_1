@@ -30,15 +30,22 @@ if ($action === 'save') {
         (int)($_POST['stok_min'] ?? 5),
         trim($_POST['lokasi_rak'] ?? ''),
     ];
+    $multi_rak_aktif = !empty($_POST['multi_rak_aktif']);
     if ($kode !== '' && $data[2] !== '') {
         try {
             if ($id) {
                 $db->prepare("UPDATE parts SET kode=?, barcode=?, nama=?, kategori=?, harga_beli=?, harga_jual=?, stok=?, stok_min=?, lokasi_rak=? WHERE id=?")
                    ->execute([...$data, $id]);
+                // Sinkronkan status Multi Rak (toggle di form) - hanya bila berubah.
+                $curAktif = (bool)$db->query("SELECT multi_rak_aktif FROM parts WHERE id=" . (int)$id)->fetchColumn();
+                if ($multi_rak_aktif && !$curAktif) rack_activate($db, $id, $data[8]);
+                elseif (!$multi_rak_aktif && $curAktif) rack_deactivate($db, $id);
                 set_flash('success', 'Data sparepart diperbarui.');
             } else {
                 $db->prepare("INSERT INTO parts (kode, barcode, nama, kategori, harga_beli, harga_jual, stok, stok_min, lokasi_rak) VALUES (?,?,?,?,?,?,?,?,?)")
                    ->execute($data);
+                $newId = (int)$db->lastInsertId();
+                if ($multi_rak_aktif) rack_activate($db, $newId, $data[8]);
                 set_flash('success', 'Sparepart baru ditambahkan.');
             }
         } catch (PDOException $e) {
@@ -102,6 +109,8 @@ if (isset($_GET['edit'])) {
     $s = $db->prepare("SELECT * FROM parts WHERE id=?"); $s->execute([(int)$_GET['edit']]);
     $edit = $s->fetch(PDO::FETCH_ASSOC);
 }
+// Rincian rak (Multi Rak) untuk sparepart yang sedang diedit.
+$edit_racks = $edit ? rack_list($db, (int)$edit['id']) : [];
 // Master kategori untuk dropdown pada form input sparepart
 $categories = $db->query("SELECT nama FROM categories ORDER BY nama")->fetchAll(PDO::FETCH_COLUMN);
 
@@ -165,15 +174,64 @@ $import_logs = $db->query("SELECT * FROM import_logs ORDER BY id DESC LIMIT 20")
             <input name="stok" type="number" min="0" class="form-control form-control-sm" value="<?= esc($edit['stok'] ?? 0) ?>" data-testid="part-stok"></div>
           <div class="col-6 mb-3"><label class="form-label small">Stok Minimum (alert)</label>
             <input name="stok_min" type="number" min="0" class="form-control form-control-sm" value="<?= esc($edit['stok_min'] ?? 5) ?>" data-testid="part-stok-min"></div>
-          <div class="col-12 mb-3">
-            <label class="form-label small">
-              <i class="bi bi-geo-alt me-1"></i>Letak / Nomor Rak
+          <div class="col-12 mb-2">
+            <label class="form-label small" id="lokasiRakLabel">
+              <i class="bi bi-geo-alt me-1"></i>Letak / Nomor Rak <span id="lokasiRakSubLabel"></span>
               <span class="text-muted" style="font-size:11px">— mempermudah pencarian di gudang</span>
             </label>
-            <input name="lokasi_rak" class="form-control form-control-sm"
+            <input name="lokasi_rak" id="lokasiRakInput" class="form-control form-control-sm"
                    placeholder="mis. R-01, A2-B3, Rak Oli Bawah..."
                    value="<?= esc($edit['lokasi_rak'] ?? '') ?>"
                    data-testid="part-lokasi-rak">
+          </div>
+
+          <!-- ==== Fitur Multi Rak ==== -->
+          <div class="col-12 mb-3">
+            <div class="border rounded p-2" id="multiRakBox" data-testid="multi-rak-box">
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" role="switch" id="multiRakToggle" name="multi_rak_aktif" value="1"
+                       <?= !empty($edit['multi_rak_aktif']) ? 'checked' : '' ?> data-testid="multi-rak-toggle">
+                <label class="form-check-label small fw-semibold" for="multiRakToggle">
+                  <i class="bi bi-diagram-3 me-1 text-warning"></i>Multi Rak
+                </label>
+                <span class="text-muted d-block" style="font-size:11px">
+                  Aktifkan bila sparepart ini disimpan di lebih dari satu rak (stok banyak, rak utama tidak cukup).
+                  Rak di atas otomatis menjadi <strong>Rak Utama</strong>.
+                </span>
+              </div>
+
+              <?php if ($edit): ?>
+              <div id="rakManager" class="mt-2 <?= empty($edit['multi_rak_aktif']) ? 'd-none' : '' ?>" data-testid="rak-manager" data-part-id="<?= (int)$edit['id'] ?>">
+                <div class="small text-muted mb-1">Rincian lokasi saat ini:</div>
+                <div id="rakChips" class="d-flex flex-wrap gap-1 mb-2" data-testid="rak-chips">
+                  <?php foreach ($edit_racks as $rk): ?>
+                    <span class="badge <?= $rk['is_utama'] ? 'bg-primary' : 'bg-warning text-dark' ?>" data-testid="rak-chip-<?= (int)$rk['id'] ?>">
+                      <?php if ($rk['is_utama']): ?><i class="bi bi-star-fill me-1"></i><?php else: ?><i class="bi bi-box-seam me-1"></i><?php endif; ?>
+                      <?= esc($rk['nama_rak']) ?>: <?= (int)$rk['stok'] ?>
+                      <?php if (!$rk['is_utama']): ?>
+                        <button type="button" class="btn-close btn-close-white ms-1" style="font-size:8px"
+                                onclick="rakHapus('<?= esc($rk['nama_rak'], ENT_QUOTES) ?>')" title="Hapus rak (stok kembali ke Rak Utama)"></button>
+                      <?php endif; ?>
+                    </span>
+                  <?php endforeach; ?>
+                </div>
+                <div class="input-group input-group-sm mb-1">
+                  <input type="text" id="rakBaruNama" class="form-control" placeholder="Nama rak baru (mis. Gudang / Rak B)" data-testid="rak-baru-nama">
+                  <input type="number" id="rakBaruJumlah" class="form-control" placeholder="Jml stok" min="1" style="max-width:90px" data-testid="rak-baru-jumlah">
+                  <button type="button" class="btn btn-outline-warning" onclick="rakTambah()" data-testid="rak-baru-submit"><i class="bi bi-plus-lg"></i></button>
+                </div>
+                <div class="small text-muted" style="font-size:11px">
+                  Jumlah ini <strong>stok baru</strong> yang ditambahkan ke rak tsb (menambah total stok sparepart). Rak Utama tidak berkurang -
+                  boleh diisi lebih banyak dari Rak Utama (mis. Rak Utama/etalase hanya muat 10, Gudang menyimpan 30 lainnya).
+                </div>
+                <div class="small text-muted" style="font-size:11px">Sudah punya stok fisik di Rak Utama yang mau dipindah ke rak lain? Gunakan <a href="index.php?page=racks&part_id=<?= (int)$edit['id'] ?>">Transfer Rak</a>, bukan form ini.</div>
+                <div id="rakMsg" class="small mt-1" style="display:none"></div>
+                <a href="index.php?page=racks&part_id=<?= (int)$edit['id'] ?>" class="small d-block mt-1" data-testid="rak-transfer-link"><i class="bi bi-arrow-left-right me-1"></i>Buka halaman Transfer Rak</a>
+              </div>
+              <?php else: ?>
+              <div class="small text-muted mt-1" style="font-size:11px" id="rakManagerHint">Simpan sparepart terlebih dahulu untuk mengatur rak tambahan.</div>
+              <?php endif; ?>
+            </div>
           </div>
         </div>
         <button class="btn btn-sm btn-primary w-100" data-testid="part-submit"><?= $edit ? 'Simpan Perubahan' : 'Tambah Sparepart' ?></button>
@@ -306,13 +364,23 @@ $import_logs = $db->query("SELECT * FROM import_logs ORDER BY id DESC LIMIT 20")
         <thead><tr><th>Kode</th><th>Nama</th><th>Kategori</th><th>Rak</th><th class="text-end">H. Beli</th><th class="text-end">H. Jual</th><th class="text-end">Stok</th><th class="text-end">Aksi</th></tr></thead>
         <tbody>
         <?php if (!$rows): ?><tr><td colspan="8" class="text-center text-muted">Belum ada data sparepart.</td></tr><?php endif; ?>
-        <?php foreach ($rows as $r): $low = $r['stok'] <= $r['stok_min']; ?>
-          <tr class="<?= $low ? 'table-danger' : '' ?>">
-            <td><?= esc($r['kode']) ?></td>
+        <?php foreach ($rows as $r): $low = $r['stok'] <= $r['stok_min']; $isMulti = !empty($r['multi_rak_aktif']); ?>
+          <tr class="<?= $low ? 'table-danger' : ($isMulti ? 'table-warning' : '') ?>" data-testid="part-row-<?= $r['id'] ?>">
+            <td>
+              <?php if ($isMulti): ?><i class="bi bi-diagram-3-fill text-warning me-1" title="Sparepart Multi Rak"></i><?php endif; ?>
+              <?= esc($r['kode']) ?>
+            </td>
             <td><?= esc($r['nama']) ?><?php if ($r['barcode']): ?> <i class="bi bi-upc text-muted" title="<?= esc($r['barcode']) ?>"></i><?php endif; ?></td>
             <td><?= esc($r['kategori']) ?></td>
             <td data-testid="part-rak-<?= $r['id'] ?>">
-              <?php if (!empty($r['lokasi_rak'])): ?>
+              <?php if ($isMulti): ?>
+                <span class="badge bg-warning text-dark" data-testid="part-rak-multi-badge-<?= $r['id'] ?>" title="Sparepart ini tersimpan di beberapa rak">
+                  <i class="bi bi-diagram-3 me-1"></i>Multi Rak
+                </span>
+                <a class="small d-block mt-1" href="index.php?page=racks&part_id=<?= $r['id'] ?>" data-testid="part-rak-detail-link-<?= $r['id'] ?>">
+                  <i class="bi bi-eye me-1"></i>Lihat rincian rak
+                </a>
+              <?php elseif (!empty($r['lokasi_rak'])): ?>
                 <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle"><i class="bi bi-geo-alt me-1"></i><?= esc($r['lokasi_rak']) ?></span>
               <?php else: ?>
                 <span class="text-muted small">-</span>
@@ -399,6 +467,72 @@ $import_logs = $db->query("SELECT * FROM import_logs ORDER BY id DESC LIMIT 20")
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
+// ==== Fitur Multi Rak (toggle + kelola rak tambahan) ====
+(function () {
+  var toggle = document.getElementById('multiRakToggle');
+  var rakManager = document.getElementById('rakManager');
+  var lokasiLabel = document.getElementById('lokasiRakSubLabel');
+  var lokasiInput = document.getElementById('lokasiRakInput');
+  if (!toggle) return;
+
+  function syncLabel() {
+    if (toggle.checked) {
+      lokasiLabel.innerHTML = '<span class="badge bg-warning text-dark ms-1"><i class="bi bi-diagram-3"></i> Rak Utama</span>';
+      if (lokasiInput && !lokasiInput.value) lokasiInput.placeholder = 'Nama Rak Utama, mis. Rak A';
+    } else {
+      lokasiLabel.innerHTML = '';
+    }
+  }
+  syncLabel();
+  toggle.addEventListener('change', function () {
+    syncLabel();
+    if (rakManager) rakManager.classList.toggle('d-none', !toggle.checked);
+  });
+
+  window.rakMsg = function (text, ok) {
+    var el = document.getElementById('rakMsg');
+    if (!el) return;
+    el.style.display = text ? 'block' : 'none';
+    el.className = 'small mt-1 py-1 px-2 rounded ' + (ok ? 'text-success bg-success-subtle' : 'text-danger fw-semibold bg-danger-subtle border border-danger');
+    el.innerHTML = (ok ? '' : '<i class="bi bi-exclamation-triangle-fill me-1"></i>') + (text || '');
+  };
+
+  window.rakTambah = function () {
+    if (!rakManager) return;
+    var partId = rakManager.getAttribute('data-part-id');
+    var nama = document.getElementById('rakBaruNama').value.trim();
+    var jumlah = parseInt(document.getElementById('rakBaruJumlah').value, 10);
+    if (!nama) { rakMsg('Nama rak wajib diisi.', false); return; }
+    if (!jumlah || jumlah < 1) { rakMsg('Jumlah harus lebih dari 0.', false); return; }
+    var fd = new FormData();
+    fd.append('action', 'add_rak'); fd.append('part_id', partId);
+    fd.append('nama_rak', nama); fd.append('jumlah', jumlah);
+    fetch('ajax/rak.php', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { rakMsg(d.error || 'Gagal menambah rak.', false); return; }
+        rakMsg('Rak "' + nama + '" ditambahkan dengan ' + jumlah + ' unit stok baru (total stok sparepart bertambah).', true);
+        setTimeout(function () { location.reload(); }, 900);
+      })
+      .catch(function () { rakMsg('Gagal menghubungi server.', false); });
+  };
+
+  window.rakHapus = function (namaRak) {
+    if (!rakManager) return;
+    if (!confirm('Hapus rak "' + namaRak + '"? Sisa stoknya akan dikembalikan ke Rak Utama.')) return;
+    var partId = rakManager.getAttribute('data-part-id');
+    var fd = new FormData();
+    fd.append('action', 'delete_rak'); fd.append('part_id', partId); fd.append('nama_rak', namaRak);
+    fetch('ajax/rak.php', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { rakMsg(d.error || 'Gagal menghapus rak.', false); return; }
+        location.reload();
+      })
+      .catch(function () { rakMsg('Gagal menghubungi server.', false); });
+  };
+})();
+
 let scannerObj = null, scanTarget = null;
 const scanModal = document.getElementById('scanModal');
 scanModal.addEventListener('shown.bs.modal', e => {

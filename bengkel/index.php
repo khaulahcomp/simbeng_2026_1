@@ -38,6 +38,7 @@ $routes = [
     'parts_bulk'     => 'Lengkapi Harga & Stok Sparepart',
     'categories'     => 'Kategori Sparepart',
     'stock'          => 'Barang Masuk & Keluar',
+    'racks'          => 'Transfer Rak (Multi Rak)',
     'pos'            => 'Kasir / Transaksi Servis',
     'transactions'   => 'Riwayat Transaksi',
     'reports'        => 'Rekap & Laporan',

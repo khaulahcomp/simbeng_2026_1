@@ -30,7 +30,8 @@ if ($action === 'search_parts') {
     if ($q === '' || mb_strlen($q) < 1) { echo json_encode([]); exit; }
     $prefix = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q) . '%';
 
-    $cols = "id, kode, barcode, nama, kategori, stok, harga_jual";
+    $cols = "id, kode, barcode, nama, kategori, stok, harga_jual, multi_rak_aktif,
+        IF(multi_rak_aktif=1, (SELECT COALESCE(pr.stok,0) FROM part_racks pr WHERE pr.part_id=parts.id AND pr.is_utama=1 LIMIT 1), stok) AS rak_utama_stok";
     $results = []; $seen = [];
     $push = function ($rows) use (&$results, &$seen) {
         foreach ($rows as $r) { if (!isset($seen[$r['id']])) { $seen[$r['id']] = true; $results[] = $r; } }
@@ -73,7 +74,8 @@ if ($action === 'search_parts') {
 if ($action === 'part_by_code') {
     $code = trim($_GET['code'] ?? '');
     if ($code === '') { echo json_encode(null); exit; }
-    $stmt = $db->prepare("SELECT id, kode, barcode, nama, kategori, stok, harga_jual
+    $stmt = $db->prepare("SELECT id, kode, barcode, nama, kategori, stok, harga_jual, multi_rak_aktif,
+        IF(multi_rak_aktif=1, (SELECT COALESCE(pr.stok,0) FROM part_racks pr WHERE pr.part_id=parts.id AND pr.is_utama=1 LIMIT 1), stok) AS rak_utama_stok
         FROM parts WHERE barcode = ? OR kode = ? ORDER BY (barcode = ?) DESC LIMIT 1");
     $stmt->execute([$code, $code, $code]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -86,7 +88,9 @@ if ($action === 'parts_by_ids') {
     $ids = array_values(array_filter(array_map('intval', explode(',', $_GET['ids'] ?? ''))));
     if (!$ids) { echo json_encode([]); exit; }
     $in = implode(',', array_fill(0, count($ids), '?'));
-    $stmt = $db->prepare("SELECT id, kode, barcode, nama, kategori, stok, harga_jual FROM parts WHERE id IN ($in)");
+    $stmt = $db->prepare("SELECT id, kode, barcode, nama, kategori, stok, harga_jual, multi_rak_aktif,
+        IF(multi_rak_aktif=1, (SELECT COALESCE(pr.stok,0) FROM part_racks pr WHERE pr.part_id=parts.id AND pr.is_utama=1 LIMIT 1), stok) AS rak_utama_stok
+        FROM parts WHERE id IN ($in)");
     $stmt->execute($ids);
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
     exit;

@@ -87,6 +87,48 @@ function run_full_migration(): void {
     if (!column_exists($db, 'parts', 'lokasi_rak')) {
         $db->exec("ALTER TABLE parts ADD COLUMN lokasi_rak VARCHAR(50) NOT NULL DEFAULT '' AFTER stok_min");
     }
+    // ---- Fitur Multi Rak ----
+    // multi_rak_aktif: flag on/off per sparepart. Saat aktif, lokasi_rak
+    // merepresentasikan nama "Rak Utama" dan rincian rak lain tersimpan
+    // di tabel part_racks. Saat non-aktif, sparepart hanya punya 1 lokasi
+    // (perilaku lama, lokasi_rak sebagai satu-satunya rak).
+    if (!column_exists($db, 'parts', 'multi_rak_aktif')) {
+        $db->exec("ALTER TABLE parts ADD COLUMN multi_rak_aktif TINYINT(1) NOT NULL DEFAULT 0 AFTER lokasi_rak");
+    }
+
+    // Rincian penempatan sparepart per rak. INVARIAN: bila multi_rak_aktif=1
+    // pada parts, maka SUM(part_racks.stok) untuk part_id tsb selalu SAMA
+    // dengan parts.stok (part_racks hanya membagi LOKASI, bukan menambah
+    // total stok). Barang Masuk & Barang Keluar/POS tetap mengubah total
+    // parts.stok seperti sebelumnya; part_racks hanya dialokasikan ulang.
+    $db->exec("CREATE TABLE IF NOT EXISTS part_racks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        part_id INT NOT NULL,
+        nama_rak VARCHAR(100) NOT NULL,
+        is_utama TINYINT(1) NOT NULL DEFAULT 0,
+        stok INT NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX (part_id),
+        UNIQUE KEY uq_part_rak_nama (part_id, nama_rak),
+        CONSTRAINT fk_pr_part FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
+    ) $eng");
+
+    // Log riwayat perpindahan stok ANTAR RAK (manual via fitur "Transfer Rak"
+    // ataupun otomatis saat Rak Utama kehabisan stok dan sistem menarik dari
+    // rak lain). Tidak memengaruhi parts.stok (total tidak berubah).
+    $db->exec("CREATE TABLE IF NOT EXISTS rack_transfer_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        part_id INT NOT NULL,
+        rak_asal VARCHAR(100) NOT NULL,
+        rak_tujuan VARCHAR(100) NOT NULL,
+        jumlah INT NOT NULL,
+        tipe VARCHAR(20) NOT NULL DEFAULT 'manual',
+        keterangan VARCHAR(500) NOT NULL DEFAULT '',
+        user_id INT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX (part_id),
+        CONSTRAINT fk_rtl_part FOREIGN KEY (part_id) REFERENCES parts(id) ON DELETE CASCADE
+    ) $eng");
 
     $db->exec("CREATE TABLE IF NOT EXISTS stock_movements (
         id INT AUTO_INCREMENT PRIMARY KEY,

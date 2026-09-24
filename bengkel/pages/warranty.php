@@ -65,6 +65,10 @@ if ($action === 'update_status') {
             $cekStok->execute([$replacement]);
             $stok = (int)$cekStok->fetchColumn();
             if ($stok < 1) throw new Exception('Stok sparepart pengganti habis.');
+            // Multi Rak: Rak Utama dikurangi dulu; otomatis tarik dari rak lain
+            // bila perlu (qty selalu 1 di alur garansi, tidak ada langkah
+            // konfirmasi interaktif di sini - transfer tetap tercatat di log).
+            rack_deduct_for_keluar($db, $replacement, 1, (int)(current_user()['id'] ?? 0), 'Penggantian klaim garansi #' . $claim_id);
             $db->prepare("UPDATE parts SET stok = stok - 1 WHERE id=?")->execute([$replacement]);
             $db->prepare("INSERT INTO stock_movements (part_id, tipe, jumlah, ref_type, ref_id, keterangan) VALUES (?,?,?,?,?,?)")
                ->execute([$replacement, 'keluar', 1, 'garansi', $claim_id, 'Penggantian unit klaim garansi']);
