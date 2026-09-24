@@ -33,13 +33,31 @@ if ($action === 'delete') {
     header('Location: index.php?page=categories'); exit;
 }
 
-$rows = $db->query("SELECT c.*, (SELECT COUNT(*) FROM parts p WHERE p.kategori = c.nama) AS jml_part
-    FROM categories c ORDER BY c.nama")->fetchAll(PDO::FETCH_ASSOC);
+$rows_all_count = (int)$db->query("SELECT COUNT(*) FROM categories")->fetchColumn();
 $edit = null;
 if (isset($_GET['edit'])) {
     $s = $db->prepare("SELECT * FROM categories WHERE id=?"); $s->execute([(int)$_GET['edit']]);
     $edit = $s->fetch(PDO::FETCH_ASSOC);
 }
+
+// --- Pagination -------------------------------------------------------
+// Batasi jumlah kategori yang ditampilkan per halaman (maks. 100) agar
+// daftar tidak memanjang ke bawah tanpa batas saat kategori sudah banyak.
+$per_page_opts = [25, 50, 100];
+$per_page = (int)($_GET['per_page'] ?? 25);
+if (!in_array($per_page, $per_page_opts, true)) $per_page = 25;
+$total_pages = max(1, (int)ceil($rows_all_count / $per_page));
+$cur_page = max(1, (int)($_GET['p'] ?? 1));
+if ($cur_page > $total_pages) $cur_page = $total_pages;
+$offset = ($cur_page - 1) * $per_page;
+
+$rows = $db->query("SELECT c.*, (SELECT COUNT(*) FROM parts p WHERE p.kategori = c.nama) AS jml_part
+    FROM categories c ORDER BY c.nama LIMIT $per_page OFFSET $offset")->fetchAll(PDO::FETCH_ASSOC);
+
+// Builder link pagination (mempertahankan route page=categories & per_page).
+$paginate_url = function ($p) use ($per_page) {
+    return 'index.php?' . http_build_query(['page' => 'categories', 'p' => $p, 'per_page' => $per_page]);
+};
 ?>
 <div class="row g-3">
   <div class="col-lg-4">
@@ -59,7 +77,18 @@ if (isset($_GET['edit'])) {
   </div>
   <div class="col-lg-8">
     <div class="card table-card"><div class="card-body">
-      <h2 class="h6 mb-3">Daftar Kategori Sparepart</h2>
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h2 class="h6 mb-0">Daftar Kategori Sparepart</h2>
+        <form method="get" class="d-flex align-items-center gap-2">
+          <input type="hidden" name="page" value="categories">
+          <label class="small text-muted mb-0" for="catPerPageSelect">Tampilkan</label>
+          <select id="catPerPageSelect" name="per_page" class="form-select form-select-sm" style="width:auto" onchange="this.form.submit()" data-testid="category-per-page">
+            <?php foreach ($per_page_opts as $opt): ?>
+              <option value="<?= $opt ?>" <?= $per_page === $opt ? 'selected' : '' ?>><?= $opt ?>/hlm</option>
+            <?php endforeach; ?>
+          </select>
+        </form>
+      </div>
       <div class="table-responsive">
       <table class="table table-sm align-middle" data-testid="categories-table">
         <thead><tr><th>Nama Kategori</th><th>Keterangan</th><th class="text-end">Jml Sparepart</th><th class="text-end">Aksi</th></tr></thead>
@@ -81,6 +110,49 @@ if (isset($_GET['edit'])) {
         <?php endforeach; ?>
         </tbody>
       </table>
+      </div>
+      <?php
+        // --- Kontrol pagination ------------------------------------------
+        $cat_from_no = $rows_all_count ? ($offset + 1) : 0;
+        $cat_to_no   = min($offset + $per_page, $rows_all_count);
+      ?>
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2" data-testid="categories-pagination">
+        <div class="small text-muted" data-testid="categories-pagination-info">
+          Menampilkan <strong><?= $cat_from_no ?>&ndash;<?= $cat_to_no ?></strong> dari <strong><?= $rows_all_count ?></strong> kategori
+        </div>
+        <?php if ($total_pages > 1): ?>
+        <nav aria-label="Pagination kategori">
+          <ul class="pagination pagination-sm mb-0" data-testid="categories-pagination-nav">
+            <li class="page-item <?= $cur_page <= 1 ? 'disabled' : '' ?>">
+              <a class="page-link" href="<?= $cur_page > 1 ? esc($paginate_url($cur_page - 1)) : '#' ?>" data-testid="category-page-prev" aria-label="Sebelumnya">
+                <i class="bi bi-chevron-left"></i>
+              </a>
+            </li>
+            <?php
+              $start = max(1, $cur_page - 2);
+              $end   = min($total_pages, $cur_page + 2);
+              if ($start > 1):
+            ?>
+              <li class="page-item"><a class="page-link" href="<?= esc($paginate_url(1)) ?>" data-testid="category-page-1">1</a></li>
+              <?php if ($start > 2): ?><li class="page-item disabled"><span class="page-link">&hellip;</span></li><?php endif; ?>
+            <?php endif; ?>
+            <?php for ($i = $start; $i <= $end; $i++): ?>
+              <li class="page-item <?= $i === $cur_page ? 'active' : '' ?>">
+                <a class="page-link" href="<?= esc($paginate_url($i)) ?>" data-testid="category-page-<?= $i ?>"><?= $i ?></a>
+              </li>
+            <?php endfor; ?>
+            <?php if ($end < $total_pages): ?>
+              <?php if ($end < $total_pages - 1): ?><li class="page-item disabled"><span class="page-link">&hellip;</span></li><?php endif; ?>
+              <li class="page-item"><a class="page-link" href="<?= esc($paginate_url($total_pages)) ?>" data-testid="category-page-<?= $total_pages ?>"><?= $total_pages ?></a></li>
+            <?php endif; ?>
+            <li class="page-item <?= $cur_page >= $total_pages ? 'disabled' : '' ?>">
+              <a class="page-link" href="<?= $cur_page < $total_pages ? esc($paginate_url($cur_page + 1)) : '#' ?>" data-testid="category-page-next" aria-label="Berikutnya">
+                <i class="bi bi-chevron-right"></i>
+              </a>
+            </li>
+          </ul>
+        </nav>
+        <?php endif; ?>
       </div>
     </div></div>
   </div>
