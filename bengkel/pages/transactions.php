@@ -23,6 +23,9 @@ if (($_POST['action'] ?? '') === 'delete') {
         $items->execute([$id]);
         foreach ($items->fetchAll(PDO::FETCH_ASSOC) as $it) {
             $db->prepare("UPDATE parts SET stok = stok + ? WHERE id=?")->execute([$it['qty'], $it['part_id']]);
+            // Multi Rak: stok yang dikembalikan masuk ke Rak Utama (jaga invarian
+            // SUM(part_racks.stok) = parts.stok tetap konsisten).
+            rack_receive_masuk($db, $it['part_id'], RAK_UTAMA_KEY, $it['qty']);
         }
         $db->prepare("DELETE FROM stock_movements WHERE ref_type='penjualan' AND ref_id=?")->execute([$id]);
         $db->prepare("DELETE FROM transaction_items WHERE transaction_id=?")->execute([$id]);

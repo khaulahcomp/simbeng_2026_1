@@ -89,6 +89,20 @@ $wa[] = "Faktur (gambar) terlampir. Simpan sebagai bukti yang sah. Sampai jumpa 
 $wa_text = implode("\n", $wa);
 $wa_url  = 'https://wa.me/' . $wa_number . '?text=' . rawurlencode($wa_text);
 
+// ---- Nama mekanik (dari dropdown Pengguna role=mekanik / ketik manual per baris jasa) ----
+$has_jasa = false;
+$mekanik_list = [];
+foreach ($items as $it) {
+    if ($it['tipe'] === 'jasa') {
+        $has_jasa = true;
+        if (trim($it['mekanik'] ?? '') !== '') {
+            $nm = trim($it['mekanik']);
+            if (!in_array($nm, $mekanik_list, true)) $mekanik_list[] = $nm;
+        }
+    }
+}
+$mekanik_display = implode(', ', $mekanik_list);
+
 // Warna stempel
 $stamp_color = $is_lunas ? '#198754' : '#dc3545';
 // Gambar stempel/tanda tangan bengkel (diunggah via Pengaturan)
@@ -128,12 +142,15 @@ $stempel_ok  = $stempel_img && is_file(__DIR__ . '/../' . $stempel_img);
     box-shadow: 0 0 0 2px rgba(255,255,255,.35) inset;
   }
   .stamp-sub { font-size: 10px; letter-spacing: 1px; font-weight: 700; }
-  /* Gambar stempel/tanda tangan bengkel menimpa border faktur (anti pemalsuan) */
+  /* Gambar stempel/tanda tangan bengkel menimpa border faktur (anti pemalsuan).
+     Posisi default utk layout 3-kolom (ada jasa+mekanik); kelas .stempel-img-2col
+     dipakai saat tidak ada jasa (layout 2-kolom, seperti sebelum ada mekanik). */
   .stempel-img {
     width: 24mm; height: 24mm; object-fit: contain;
-    position: absolute; right: 27mm; top: -8mm; z-index: 4;
+    position: absolute; right: 70mm; top: -8mm; z-index: 4;
     transform: rotate(-6deg); opacity: .85;
   }
+  .stempel-img.stempel-img-2col { right: 27mm; }
   @media print {
     @page { size: A4 portrait; margin: 7mm; }
     body { background:#fff; }
@@ -205,6 +222,9 @@ $stempel_ok  = $stempel_img && is_file(__DIR__ . '/../' . $stempel_img);
           <?php if ((int)$it['garansi_hari'] > 0): ?>
             <div style="font-size:9.5px;color:#555">Garansi <?= (int)$it['garansi_hari'] ?> hari s.d. <?= date('d/m/Y', strtotime(lokal($t['created_at'], 'Y-m-d') . " +{$it['garansi_hari']} days")) ?></div>
           <?php endif; ?>
+          <?php if ($it['tipe'] === 'jasa' && trim($it['mekanik'] ?? '') !== ''): ?>
+            <div style="font-size:9.5px;color:#555"><i>Mekanik: <?= esc(trim($it['mekanik'])) ?></i></div>
+          <?php endif; ?>
         </td>
         <td class="ctr"><?= (int)$it['qty'] ?></td>
         <td class="num"><?= number_format((float)$it['harga'], 0, ',', '.') ?></td>
@@ -232,18 +252,26 @@ $stempel_ok  = $stempel_img && is_file(__DIR__ . '/../' . $stempel_img);
     </tfoot>
   </table>
 
-  <!-- Stempel (menimpa border bawah tabel) + tanda tangan -->
+  <!-- Stempel (menimpa border bawah tabel) + tanda tangan.
+       Ada jasa -> 3 kolom (status, stempel bengkel, mekanik).
+       Tidak ada jasa -> 2 kolom saja (status, stempel bengkel), seperti semula. -->
   <div class="row g-0 mt-4 stamp-wrap">
-    <div class="col-7" data-testid="receipt-status">
+    <div class="col-<?= $has_jasa ? '4' : '7' ?>" data-testid="receipt-status">
       <span class="stamp"><?= $is_lunas ? 'LUNAS' : 'BELUM LUNAS' ?><?php if (!$is_lunas && $jatuh_tempo_fmt): ?><div class="stamp-sub">Jatuh Tempo: <?= esc($jatuh_tempo_fmt) ?></div><?php endif; ?></span>
     </div>
     <?php if ($stempel_ok): ?>
-    <img src="<?= esc($stempel_img) ?>" alt="Stempel <?= esc(setting('nama_bengkel', 'Bengkel')) ?>" class="stempel-img" data-testid="receipt-stempel">
+    <img src="<?= esc($stempel_img) ?>" alt="Stempel <?= esc(setting('nama_bengkel', 'Bengkel')) ?>" class="stempel-img<?= $has_jasa ? '' : ' stempel-img-2col' ?>" data-testid="receipt-stempel">
     <?php endif; ?>
-    <div class="col-5 text-center" style="font-size:11.5px">
+    <div class="col-<?= $has_jasa ? '4' : '5' ?> text-center" style="font-size:11.5px">
       Hormat kami,<br><br><br>
-      <div style="border-top:1px solid #000;display:inline-block;padding-top:3px;min-width:150px">( .......................... )</div>
+      <div style="border-top:1px solid #000;display:inline-block;padding-top:3px;min-width:<?= $has_jasa ? '130px' : '150px' ?>">( .......................... )</div>
     </div>
+    <?php if ($has_jasa): ?>
+    <div class="col-4 text-center" style="font-size:11.5px" data-testid="receipt-mekanik">
+      Mekanik,<br><br><br>
+      <div style="border-top:1px solid #000;display:inline-block;padding-top:3px;min-width:130px"><?= $mekanik_display !== '' ? '( ' . esc($mekanik_display) . ' )' : '( .......................... )' ?></div>
+    </div>
+    <?php endif; ?>
   </div>
   <p class="mt-2 mb-0" style="font-size:10.5px;color:#555">Terima kasih atas kepercayaan Anda. Simpan faktur ini sebagai bukti yang sah.</p>
 </div>

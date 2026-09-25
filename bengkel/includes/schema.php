@@ -197,6 +197,11 @@ function run_full_migration(): void {
         CONSTRAINT fk_ti_trx FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,
         CONSTRAINT fk_ti_part FOREIGN KEY (part_id) REFERENCES parts(id)
     ) $eng");
+    // Nama mekanik per baris JASA - diinput bebas oleh kasir (TIDAK mengacu ke
+    // data user/role mekanik), tampil di faktur utk tanda tangan mekanik.
+    if (!column_exists($db, 'transaction_items', 'mekanik')) {
+        $db->exec("ALTER TABLE transaction_items ADD COLUMN mekanik VARCHAR(100) NOT NULL DEFAULT '' AFTER garansi_hari");
+    }
     // Diskon per item (nominal Rp / persen %). diskon = nominal potongan terhitung.
     if (!column_exists($db, 'transaction_items', 'diskon_jenis')) {
         $db->exec("ALTER TABLE transaction_items ADD COLUMN diskon_jenis VARCHAR(10) NOT NULL DEFAULT '' AFTER harga");

@@ -14,6 +14,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     $jasa_nama   = $_POST['jasa_nama'] ?? [];
     $jasa_biaya  = $_POST['jasa_biaya'] ?? [];
     $jasa_garansi= $_POST['jasa_garansi'] ?? [];
+    $jasa_mekanik_sel = $_POST['jasa_mekanik_select'] ?? [];
+    $jasa_mekanik_man = $_POST['jasa_mekanik_manual'] ?? [];
     $jasa_dj     = $_POST['jasa_diskon_jenis'] ?? [];
     $jasa_dn     = $_POST['jasa_diskon_nilai'] ?? [];
     $part_id     = $_POST['part_id'] ?? [];
@@ -55,7 +57,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         if ($nm === '' || $biaya <= 0) continue;
         [$dj, $dn, $disc] = $item_diskon($jasa_dj[$i] ?? '', $jasa_dn[$i] ?? 0, $biaya);
         $sub = $biaya - $disc;
-        $items[] = ['tipe'=>'jasa', 'part_id'=>null, 'nama'=>$nm, 'qty'=>1, 'harga'=>$biaya, 'diskon_jenis'=>$dj, 'diskon_nilai'=>$dn, 'diskon'=>$disc, 'subtotal'=>$sub, 'garansi_hari'=>(int)($jasa_garansi[$i] ?? 0)];
+        $mekSel = trim($jasa_mekanik_sel[$i] ?? '');
+        $mekanik = ($mekSel === '__LAINNYA__') ? trim($jasa_mekanik_man[$i] ?? '') : $mekSel;
+        $items[] = ['tipe'=>'jasa', 'part_id'=>null, 'nama'=>$nm, 'qty'=>1, 'harga'=>$biaya, 'diskon_jenis'=>$dj, 'diskon_nilai'=>$dn, 'diskon'=>$disc, 'subtotal'=>$sub, 'garansi_hari'=>(int)($jasa_garansi[$i] ?? 0), 'mekanik'=>$mekanik];
         $total_jasa += $sub;
     }
     // Kumpulkan item sparepart — kode/item yang sama digabung jadi satu baris
@@ -132,34 +136,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
             $trx_id = (int)$db->lastInsertId();
         }
 
-        // Multi Rak: Rak Utama selalu dikurangi lebih dulu. Bila stoknya tidak
-        // cukup untuk item kasir ini, sistem menarik otomatis dari rak lain -
-        // TAPI wajib konfirmasi user dulu (kecuali sudah dikonfirmasi via
-        // confirm_transfer=1). Precheck dilakukan di sini (setelah stok lama
-        // dikembalikan bila mode edit) supaya akurat, lalu batal (rollback)
-        // bila belum dikonfirmasi.
-        $confirm_transfer = ($_POST['confirm_transfer'] ?? '') === '1';
-        $needConfirm = [];
+        // Multi Rak: Rak Utama selalu dikurangi lebih dulu untuk penjualan
+        // kasir. Bila stoknya TIDAK CUKUP, transaksi DITOLAK (bukan otomatis
+        // ambil dari rak lain) - kasir harus melakukan Transfer Rak dulu
+        // secara manual. Dicek di sini (setelah stok lama dikembalikan bila
+        // mode edit) supaya akurat, lalu batal (rollback) bila kurang.
+        $rakKurang = [];
         foreach ($items as $it) {
             if ($it['tipe'] !== 'part') continue;
             $pre = rack_precheck_keluar($db, $it['part_id'], $it['qty']);
             if ($pre['perlu_transfer']) {
-                $rinci = implode(', ', array_map(fn($s) => "{$s['ambil']} dari \"{$s['nama_rak']}\"", $pre['sumber']));
-                $needConfirm[] = "{$it['nama']}: pindahkan $rinci ke Rak Utama";
+                $rakKurang[] = "{$it['nama']} (Rak Utama tersisa {$pre['rak_utama_stok']}, diminta {$it['qty']})";
             }
         }
-        if ($needConfirm && !$confirm_transfer) {
+        if ($rakKurang) {
             $db->rollBack();
-            $_SESSION['pos_confirm_needed'] = $needConfirm;
-            set_flash('danger', 'Stok Rak Utama sebagian item tidak mencukupi. Sistem perlu memindahkan stok dari rak lain terlebih dahulu - periksa rincian & konfirmasi untuk melanjutkan.');
+            set_flash('danger', 'Stok Rak Utama tidak cukup untuk: ' . implode('; ', $rakKurang) . '. Lakukan Transfer Rak dari gudang/rak lain ke Rak Utama terlebih dahulu, baru catat ulang transaksi.');
             header("Location: $back"); exit;
         }
 
-        $insItem = $db->prepare("INSERT INTO transaction_items (transaction_id, tipe, part_id, nama, qty, harga, special_price, diskon_jenis, diskon_nilai, diskon, subtotal, garansi_hari) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+        $insItem = $db->prepare("INSERT INTO transaction_items (transaction_id, tipe, part_id, nama, qty, harga, special_price, diskon_jenis, diskon_nilai, diskon, subtotal, garansi_hari, mekanik) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
         $updStok = $db->prepare("UPDATE parts SET stok = stok - ? WHERE id=?");
         $insMov  = $db->prepare("INSERT INTO stock_movements (part_id, tipe, jumlah, ref_type, ref_id, keterangan) VALUES (?,?,?,?,?,?)");
         foreach ($items as $it) {
-            $insItem->execute([$trx_id, $it['tipe'], $it['part_id'], $it['nama'], $it['qty'], $it['harga'], $it['special_price'] ?? 0, $it['diskon_jenis'], $it['diskon_nilai'], $it['diskon'], $it['subtotal'], $it['garansi_hari']]);
+            $insItem->execute([$trx_id, $it['tipe'], $it['part_id'], $it['nama'], $it['qty'], $it['harga'], $it['special_price'] ?? 0, $it['diskon_jenis'], $it['diskon_nilai'], $it['diskon'], $it['subtotal'], $it['garansi_hari'], $it['mekanik'] ?? '']);
             if ($it['tipe'] === 'part') {
                 rack_deduct_for_keluar($db, $it['part_id'], $it['qty'], (int)(current_user()['id'] ?? 0), "Nota $no_nota");
                 $updStok->execute([$it['qty'], $it['part_id']]);
@@ -205,29 +205,14 @@ if (isset($_GET['edit'])) {
 }
 
 $customers = $db->query("SELECT id, nama, telepon FROM customers ORDER BY nama")->fetchAll(PDO::FETCH_ASSOC);
+// Daftar nama mekanik (dari data Pengguna dengan role=mekanik) utk dropdown Jasa.
+$mekanik_users = $db->query("SELECT nama FROM users WHERE role='mekanik' ORDER BY nama")->fetchAll(PDO::FETCH_COLUMN);
 // CATATAN OPTIMASI: daftar sparepart TIDAK lagi dimuat seluruhnya ke browser.
 // Pencarian dilakukan server-side via AJAX (ajax/lookup.php) sehingga tetap
 // ringan walau data mencapai ratusan ribu record.
-
-// Multi Rak: rincian kebutuhan transfer otomatis (diisi saat submit sebelumnya
-// gagal karena belum dikonfirmasi user) - tampil sekali lalu dibuang.
-$pos_confirm_needed = $_SESSION['pos_confirm_needed'] ?? null;
-unset($_SESSION['pos_confirm_needed']);
 ?>
 <?php if (!$customers): ?>
 <div class="alert alert-warning" data-testid="pos-no-customer">Belum ada pelanggan. <a href="index.php?page=customers">Tambah pelanggan dulu</a> sebelum membuat transaksi.</div>
-<?php endif; ?>
-<?php if ($pos_confirm_needed): ?>
-<div class="alert alert-warning" data-testid="pos-confirm-transfer-banner">
-  <i class="bi bi-diagram-3 me-1"></i><strong>Konfirmasi Transfer Rak diperlukan.</strong> Stok Rak Utama sebagian item tidak mencukupi, sistem akan otomatis memindahkan:
-  <ul class="mb-1">
-    <?php foreach ($pos_confirm_needed as $line): ?><li><?= esc($line) ?></li><?php endforeach; ?>
-  </ul>
-  Cart Anda sudah dipulihkan dari draf di bawah. Klik tombol berikut untuk melanjutkan dengan transfer otomatis tsb.
-  <button type="button" class="btn btn-sm btn-warning d-block mt-1" id="posConfirmTransferBtn" data-testid="pos-confirm-transfer-btn">
-    <i class="bi bi-check2-circle me-1"></i>Ya, Transfer &amp; Simpan Transaksi
-  </button>
-</div>
 <?php endif; ?>
 <?php if ($edit_trx): ?>
 <div class="alert alert-info" data-testid="pos-edit-banner"><i class="bi bi-pencil-square me-1"></i>Mode Edit transaksi <strong><?= esc($edit_trx['no_nota']) ?></strong>. Stok sparepart lama akan dikembalikan lalu dihitung ulang saat disimpan. <a href="index.php?page=transactions" data-testid="pos-edit-cancel">Batalkan edit</a></div>
@@ -238,7 +223,6 @@ unset($_SESSION['pos_confirm_needed']);
 <form method="post" data-testid="pos-form">
   <input type="hidden" name="action" value="save_trx">
   <input type="hidden" name="edit_id" value="<?= $edit_trx['id'] ?? 0 ?>">
-  <input type="hidden" name="confirm_transfer" id="posConfirmTransferField" value="0" data-testid="pos-confirm-transfer-field">
   <div class="row g-3 mb-4">
     <div class="col-md-5">
       <label class="form-label fw-semibold">Pelanggan</label>
@@ -260,10 +244,11 @@ unset($_SESSION['pos_confirm_needed']);
 
   <h2 class="h6">Jasa Servis</h2>
   <div class="row g-2 mb-1 d-none d-md-flex text-muted small fw-semibold" data-testid="jasa-header">
-    <div class="col-md-3">Nama Jasa</div>
-    <div class="col-md-2">Biaya</div>
-    <div class="col-md-3">Diskon (Rp / %)</div>
-    <div class="col-md-2">Garansi (hari)</div>
+    <div class="col-md-4">Nama Jasa</div>
+    <div class="col-md-1">Biaya</div>
+    <div class="col-md-2">Diskon (Rp / %)</div>
+    <div class="col-md-1">Garansi (hari)</div>
+    <div class="col-md-2">Nama Mekanik</div>
     <div class="col-md-1 text-end">Total</div>
     <div class="col-md-1"></div>
   </div>
@@ -358,6 +343,36 @@ unset($_SESSION['pos_confirm_needed']);
 <script>
 const rupiah = n => 'Rp ' + Math.round(n).toLocaleString('id-ID');
 function escHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// Daftar nama mekanik dari data Pengguna (role=mekanik), utk dropdown Jasa Servis.
+const MEKANIK_LIST = <?= json_encode($mekanik_users, JSON_UNESCAPED_UNICODE) ?>;
+
+// Dropdown pilih mekanik + fallback "ketik manual" (utk mekanik yg belum
+// terdaftar sbg Pengguna, atau data lama sebelum fitur dropdown ini ada).
+function mekanikSelectHtml(idx, selected) {
+  selected = selected || '';
+  const known = MEKANIK_LIST.includes(selected);
+  let opts = '<option value="">- Pilih mekanik -</option>';
+  MEKANIK_LIST.forEach(nm => { opts += `<option value="${escHtml(nm)}" ${nm === selected ? 'selected' : ''}>${escHtml(nm)}</option>`; });
+  opts += `<option value="__LAINNYA__" ${(!known && selected) ? 'selected' : ''}>+ Lainnya (ketik manual)</option>`;
+  const manualVal = (!known && selected) ? selected : '';
+  const manualHidden = (!known && selected) ? '' : 'd-none';
+  return `<select name="jasa_mekanik_select[]" class="form-select form-select-sm" onchange="jasaMekanikChange(this)" data-testid="jasa-mekanik-${idx}" title="Mekanik yang mengerjakan - tampil di faktur untuk tanda tangan">${opts}</select>
+    <input type="text" class="form-control form-control-sm mt-1 ${manualHidden}" name="jasa_mekanik_manual[]" placeholder="Ketik nama mekanik" value="${escHtml(manualVal)}" data-testid="jasa-mekanik-manual-${idx}">`;
+}
+function jasaMekanikChange(sel) {
+  const manual = sel.nextElementSibling;
+  if (!manual) return;
+  if (sel.value === '__LAINNYA__') { manual.classList.remove('d-none'); manual.focus(); }
+  else { manual.classList.add('d-none'); manual.value = ''; }
+}
+// Nilai mekanik efektif dari 1 baris jasa (dipakai saat simpan draft).
+function jasaMekanikCurrentValue(row) {
+  const sel = row.querySelector('[name="jasa_mekanik_select[]"]');
+  if (!sel) return '';
+  if (sel.value === '__LAINNYA__') return row.querySelector('[name="jasa_mekanik_manual[]"]')?.value || '';
+  return sel.value || '';
+}
 function debounce(fn, ms){ let t; return function(){ const a=arguments,c=this; clearTimeout(t); t=setTimeout(()=>fn.apply(c,a),ms); }; }
 // Pencarian sparepart server-side (indexed). Payload kecil (maks ~20 hasil).
 async function apiSearchParts(term){ try{ const r=await fetch('ajax/lookup.php?action=search_parts&q='+encodeURIComponent(term)); if(!r.ok) return []; return await r.json(); }catch(e){ return []; } }
@@ -376,15 +391,16 @@ document.getElementById('posCustomer').addEventListener('change', async function
   });
 });
 
-function addJasa(nama = '', biaya = '', garansi = 0, dj = '', dn = '') {
+function addJasa(nama = '', biaya = '', garansi = 0, dj = '', dn = '', mekanik = '') {
   const idx = document.querySelectorAll('.jasa-row').length;
   const div = document.createElement('div');
   div.className = 'row g-2 mb-2 align-items-center jasa-row';
   div.innerHTML = `
-    <div class="col-6 col-md-3"><input name="jasa_nama[]" class="form-control form-control-sm" placeholder="Ganti oli, tune-up..." value="${nama}" data-testid="jasa-nama-${idx}"></div>
-    <div class="col-6 col-md-2"><input name="jasa_biaya[]" type="number" min="0" class="form-control form-control-sm jasa-biaya" placeholder="Biaya jasa" value="${biaya}" oninput="hitung()" data-testid="jasa-biaya-${idx}"></div>
-    <div class="col-6 col-md-3">${diskonCell('jasa', idx, dj, dn)}</div>
-    <div class="col-6 col-md-2"><input name="jasa_garansi[]" type="number" min="0" class="form-control form-control-sm" placeholder="Garansi (hari)" value="${garansi}" data-testid="jasa-garansi-${idx}"></div>
+    <div class="col-6 col-md-4"><input name="jasa_nama[]" class="form-control form-control-sm" placeholder="Ganti oli, tune-up..." value="${nama}" data-testid="jasa-nama-${idx}"></div>
+    <div class="col-6 col-md-1"><input name="jasa_biaya[]" type="number" min="0" class="form-control form-control-sm jasa-biaya" placeholder="Biaya" value="${biaya}" oninput="hitung()" data-testid="jasa-biaya-${idx}"></div>
+    <div class="col-6 col-md-2">${diskonCell('jasa', idx, dj, dn)}</div>
+    <div class="col-6 col-md-1"><input name="jasa_garansi[]" type="number" min="0" class="form-control form-control-sm" placeholder="Hari" value="${garansi}" data-testid="jasa-garansi-${idx}"></div>
+    <div class="col-6 col-md-2">${mekanikSelectHtml(idx, mekanik)}</div>
     <div class="col-8 col-md-1 text-end small fw-semibold item-total" data-testid="jasa-total-${idx}">Rp 0</div>
     <div class="col-4 col-md-1"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.jasa-row').remove();hitung()" data-testid="jasa-remove-${idx}"><i class="bi bi-x"></i></button></div>`;
   document.getElementById('jasaRows').appendChild(div);
@@ -399,7 +415,7 @@ function diskonCell(prefix, idx, dj = 'persen', dn = '') {
       <option value="nominal" ${dj==='nominal'?'selected':''}>Rp</option>
       <option value="persen" ${dj==='persen'?'selected':''}>%</option>
     </select>
-    <input name="${prefix}_diskon_nilai[]" type="number" min="0" step="any" class="form-control diskon-nilai" placeholder="0" value="${dn}" oninput="hitung()" data-testid="${prefix}-diskon-nilai-${idx}">
+    <input name="${prefix}_diskon_nilai[]" type="number" min="0" step="any" class="form-control diskon-nilai" style="max-width:72px" placeholder="0" value="${dn}" oninput="hitung()" data-testid="${prefix}-diskon-nilai-${idx}">
   </div>`;
 }
 
@@ -426,7 +442,7 @@ function addPartRow(part, qty = 1, garansi = 0, dj = 'persen', dn = '', sp = '')
   const rakUtamaPart = (part.rak_utama_stok === '' || part.rak_utama_stok == null) ? stokPart : part.rak_utama_stok;
   div.innerHTML = `
     <div class="col-6 col-md-3"><select name="part_id[]" class="form-select form-select-sm part-select" onchange="hitung()" data-testid="part-select-${idx}"><option value="${part.id}" data-harga="${part.harga_jual}" data-stok="${stokPart}" data-multi="${multiPart}" data-rakutama="${rakUtamaPart}" selected>${escHtml(part._label || partOptionLabel(part))}${multiPart === '1' ? ' 🗂' : ''}</option></select></div>
-    <div class="col-6 col-md-1"><input name="part_qty[]" type="number" min="1" class="form-control form-control-sm part-qty" value="${qty}" oninput="hitung()" data-testid="part-qty-${idx}"><div class="qty-warn text-danger fw-semibold" style="display:none;font-size:10px" data-testid="part-qty-warn-${idx}">Melebihi stok!</div><div class="rak-transfer-hint text-warning" style="display:none;font-size:10px" data-testid="part-rak-hint-${idx}"><i class="bi bi-diagram-3"></i> akan transfer rak</div></div>
+    <div class="col-6 col-md-1"><input name="part_qty[]" type="number" min="1" class="form-control form-control-sm part-qty" value="${qty}" oninput="hitung()" data-testid="part-qty-${idx}"><div class="qty-warn text-danger fw-semibold" style="display:none;font-size:10px" data-testid="part-qty-warn-${idx}">Melebihi stok!</div><div class="rak-transfer-hint text-danger fw-semibold" style="display:none;font-size:10px" data-testid="part-rak-hint-${idx}"></div></div>
     <div class="col-6 col-md-2">${diskonCell('part', idx, dj, dn)}</div>
     <div class="col-6 col-md-2"><input name="part_garansi[]" type="number" min="0" class="form-control form-control-sm" placeholder="Garansi (hari)" value="${garansi}" data-testid="part-garansi-${idx}"></div>
     <div class="col-6 col-md-2"><input name="part_special[]" type="number" min="0" step="any" class="form-control form-control-sm part-special" placeholder="Normal: ${Math.round(hargaNormal).toLocaleString('id-ID')}" value="${sp}" oninput="hitung()" data-testid="part-special-${idx}" title="Kosongkan = harga jual normal. Isi = harga khusus per unit."></div>
@@ -529,6 +545,8 @@ function hitung() {
 
 // Validasi stok: qty melebihi stok -> baris ditandai merah, muncul peringatan,
 // dan tombol simpan dikunci agar item tidak tersimpan minus dari keberadaan stok.
+// Multi Rak: qty yang melebihi stok Rak Utama JUGA diblokir (bukan otomatis
+// ambil dari rak lain) - kasir harus Transfer Rak dulu secara manual.
 function validateStok() {
   const over = [];
   document.querySelectorAll('.part-row').forEach(r => {
@@ -536,26 +554,34 @@ function validateStok() {
     const opt = sel?.selectedOptions[0];
     const stok = parseInt(opt?.dataset.stok);
     const pid = sel?.value;
-    const avail = (isNaN(stok) ? Infinity : stok) + (parseInt((window.POS_OLD_QTY || {})[pid]) || 0);
+    const oldQty = parseInt((window.POS_OLD_QTY || {})[pid]) || 0;
+    const avail = (isNaN(stok) ? Infinity : stok) + oldQty;
     const qtyInp = r.querySelector('.part-qty');
     const qty = parseInt(qtyInp.value) || 0;
     const warn = r.querySelector('.qty-warn');
     const rakHint = r.querySelector('.rak-transfer-hint');
+    const isMulti = opt?.dataset.multi === '1';
+    const rakUtama = parseInt(opt?.dataset.rakutama);
+    const rakUtamaAvail = (isNaN(rakUtama) ? Infinity : rakUtama) + oldQty;
+
     if (qty > avail) {
       qtyInp.classList.add('is-invalid');
       r.classList.add('overstock');
       if (warn) warn.style.display = '';
       if (rakHint) rakHint.style.display = 'none';
       over.push((opt ? opt.textContent.split(' - ')[0] : 'item') + ' (stok ' + stok + ', diminta ' + qty + ')');
+    } else if (isMulti && qty > rakUtamaAvail) {
+      // Stok total cukup, TAPI Rak Utama tidak cukup -> BLOKIR, minta transfer manual dulu.
+      qtyInp.classList.add('is-invalid');
+      r.classList.add('overstock');
+      if (warn) warn.style.display = 'none';
+      if (rakHint) { rakHint.style.display = ''; rakHint.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Stok Rak Utama tidak cukup (tersisa ' + rakUtamaAvail + '). Lakukan Transfer Rak dahulu.'; }
+      over.push((opt ? opt.textContent.split(' - ')[0] : 'item') + ' (Rak Utama tersisa ' + rakUtamaAvail + ', diminta ' + qty + ' - lakukan Transfer Rak)');
     } else {
       qtyInp.classList.remove('is-invalid');
       r.classList.remove('overstock');
       if (warn) warn.style.display = 'none';
-      // Info non-blocking: cukup secara total, tapi Rak Utama kurang -> akan
-      // otomatis transfer dari rak lain (dikonfirmasi via banner saat submit).
-      const isMulti = opt?.dataset.multi === '1';
-      const rakUtama = parseInt(opt?.dataset.rakutama);
-      if (rakHint) rakHint.style.display = (isMulti && !isNaN(rakUtama) && qty > rakUtama) ? '' : 'none';
+      if (rakHint) rakHint.style.display = 'none';
     }
   });
   const btn = document.querySelector('[data-testid="pos-submit"]');
@@ -564,7 +590,7 @@ function validateStok() {
   if (box) {
     if (over.length) {
       box.style.display = '';
-      box.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i><strong>Stok tidak cukup:</strong> ' + escHtml(over.join('; ')) + '. Kurangi qty agar transaksi bisa disimpan.';
+      box.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i><strong>Stok tidak cukup:</strong> ' + escHtml(over.join('; ')) + '. Kurangi qty atau lakukan Transfer Rak agar transaksi bisa disimpan.';
     } else {
       box.style.display = 'none';
     }
@@ -711,7 +737,7 @@ EDIT_ITEMS.forEach(it => { if (it.tipe === 'part' && it.part_id) window.POS_OLD_
   const fetched = await apiPartsByIds(partIds);
   const byId = {}; fetched.forEach(p => { byId[p.id] = p; });
   EDIT_ITEMS.forEach(it => {
-    if (it.tipe === 'jasa') { addJasa(it.nama, it.harga, it.garansi_hari, it.diskon_jenis || '', (it.diskon_jenis ? it.diskon_nilai : '')); }
+    if (it.tipe === 'jasa') { addJasa(it.nama, it.harga, it.garansi_hari, it.diskon_jenis || '', (it.diskon_jenis ? it.diskon_nilai : ''), it.mekanik || ''); }
     else {
       const p = byId[it.part_id] || { id: it.part_id, kode: '(part)', nama: it.nama, harga_jual: it.harga, stok: '-' };
       const sp = (parseFloat(it.special_price) > 0) ? it.special_price : '';
@@ -756,7 +782,8 @@ function serializeDraft() {
       biaya: r.querySelector('[name="jasa_biaya[]"]').value,
       dj: r.querySelector('.diskon-jenis')?.value || 'persen',
       dn: r.querySelector('.diskon-nilai')?.value || '',
-      garansi: r.querySelector('[name="jasa_garansi[]"]').value
+      garansi: r.querySelector('[name="jasa_garansi[]"]').value,
+      mekanik: jasaMekanikCurrentValue(r)
     });
   });
   document.querySelectorAll('.part-row').forEach(r => {
@@ -782,7 +809,7 @@ function saveDraft(submitted = false) {
 }
 async function restoreDraft(d) {
   document.querySelectorAll('.jasa-row,.part-row,.part-search-row').forEach(r => r.remove());
-  (d.jasa || []).forEach(j => addJasa(j.nama, j.biaya, j.garansi, j.dj, j.dn));
+  (d.jasa || []).forEach(j => addJasa(j.nama, j.biaya, j.garansi, j.dj, j.dn, j.mekanik));
   (d.parts || []).forEach(p => addPartRow({ id: p.id, kode: '', nama: '', harga_jual: p.harga, stok: p.stok, _label: p.label }, p.qty, p.garansi, p.dj, p.dn, p.special));
   document.getElementById('diskonJenis').value = d.diskon_jenis || 'persen';
   document.getElementById('diskonNilai').value = d.diskon_nilai || '';
@@ -799,17 +826,6 @@ async function restoreDraft(d) {
   if (!document.querySelector('.part-row') && !document.querySelector('.part-search-row')) addPart();
   hitung();
 }
-(function () {
-  var btn = document.getElementById('posConfirmTransferBtn');
-  var field = document.getElementById('posConfirmTransferField');
-  var form = document.querySelector('[data-testid="pos-form"]');
-  if (btn && field && form) {
-    btn.addEventListener('click', function () {
-      field.value = '1';
-      form.requestSubmit ? form.requestSubmit() : form.submit();
-    });
-  }
-})();
 (function initDraft() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
