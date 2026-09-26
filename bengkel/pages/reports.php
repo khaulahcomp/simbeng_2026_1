@@ -9,6 +9,20 @@ $rows = laporan_transaksi($dari, $sampai);
 $tot_jasa = array_sum(array_column($rows, 'total_jasa'));
 $tot_part = array_sum(array_column($rows, 'total_part'));
 $tot_all  = array_sum(array_column($rows, 'grand_total'));
+
+// ---- Mekanik & Jasa: detail per baris jasa + rekap otomatis per mekanik ----
+$jasa_rows = laporan_jasa_mekanik($dari, $sampai);
+$rekap_mekanik = rekap_pendapatan_mekanik($jasa_rows);
+// Nama mekanik per transaksi (gabungan, unik) - dipakai utk kolom "Mekanik"
+// pada tabel utama, agar langsung terlihat tanpa buka nota.
+$mekanik_by_trx = [];
+foreach ($jasa_rows as $jr) {
+    $nm = trim((string)($jr['mekanik'] ?? ''));
+    if ($nm === '') continue;
+    $tid = $jr['transaction_id'];
+    if (!isset($mekanik_by_trx[$tid])) $mekanik_by_trx[$tid] = [];
+    if (!in_array($nm, $mekanik_by_trx[$tid], true)) $mekanik_by_trx[$tid][] = $nm;
+}
 // Bawa hanya parameter filter yang relevan ke tautan export
 $export_qs = http_build_query(array_merge(
     array_intersect_key($_GET, array_flip(['periode', 'tanggal', 'bulan', 'tahun', 'dari', 'sampai'])),
@@ -75,9 +89,9 @@ $export_qs = http_build_query(array_merge(
 
   <div class="table-responsive">
   <table class="table table-sm align-middle" data-testid="report-table">
-    <thead><tr><th>No</th><th>No. Nota</th><th>Tanggal</th><th>Pelanggan</th><th>Plat</th><th class="text-end">Jasa</th><th class="text-end">Sparepart</th><th class="text-end">Total</th></tr></thead>
+    <thead><tr><th>No</th><th>No. Nota</th><th>Tanggal</th><th>Pelanggan</th><th>Plat</th><th>Mekanik</th><th class="text-end">Jasa</th><th class="text-end">Sparepart</th><th class="text-end">Total</th></tr></thead>
     <tbody>
-    <?php if (!$rows): ?><tr><td colspan="8" class="text-center text-muted">Tidak ada transaksi pada periode ini.</td></tr><?php endif; ?>
+    <?php if (!$rows): ?><tr><td colspan="9" class="text-center text-muted">Tidak ada transaksi pada periode ini.</td></tr><?php endif; ?>
     <?php foreach ($rows as $i => $r): ?>
       <tr>
         <td><?= $i + 1 ?></td>
@@ -85,6 +99,7 @@ $export_qs = http_build_query(array_merge(
         <td class="small"><?= esc(lokal($r['created_at'])) ?></td>
         <td><?= esc($r['customer_nama']) ?></td>
         <td><?= esc($r['plat_nomor'] ?? '-') ?></td>
+        <td class="small" data-testid="report-mekanik-<?= $r['id'] ?>"><?= esc(implode(', ', $mekanik_by_trx[$r['id']] ?? []) ?: '-') ?></td>
         <td class="text-end"><?= rupiah($r['total_jasa']) ?></td>
         <td class="text-end"><?= rupiah($r['total_part']) ?></td>
         <td class="text-end fw-semibold"><?= rupiah($r['grand_total']) ?></td>
@@ -92,8 +107,52 @@ $export_qs = http_build_query(array_merge(
     <?php endforeach; ?>
     </tbody>
     <?php if ($rows): ?>
-    <tfoot><tr class="fw-bold table-light"><td colspan="5">TOTAL</td><td class="text-end"><?= rupiah($tot_jasa) ?></td><td class="text-end"><?= rupiah($tot_part) ?></td><td class="text-end"><?= rupiah($tot_all) ?></td></tr></tfoot>
+    <tfoot><tr class="fw-bold table-light"><td colspan="6">TOTAL</td><td class="text-end"><?= rupiah($tot_jasa) ?></td><td class="text-end"><?= rupiah($tot_part) ?></td><td class="text-end"><?= rupiah($tot_all) ?></td></tr></tfoot>
     <?php endif; ?>
+  </table>
+  </div>
+</div></div>
+
+<div class="card table-card mt-3"><div class="card-body">
+  <h2 class="h6 mb-3" data-testid="mekanik-summary-title">Rekap Pendapatan per Mekanik — <?= esc($label) ?></h2>
+  <div class="table-responsive">
+  <table class="table table-sm align-middle" data-testid="mekanik-summary-table">
+    <thead><tr><th>Mekanik</th><th class="text-end">Jumlah Jasa</th><th class="text-end">Total Pendapatan Jasa</th></tr></thead>
+    <tbody>
+    <?php if (!$rekap_mekanik): ?><tr><td colspan="3" class="text-center text-muted">Belum ada jasa dengan mekanik pada periode ini.</td></tr><?php endif; ?>
+    <?php foreach ($rekap_mekanik as $m): ?>
+      <tr>
+        <td><?= esc($m['mekanik']) ?></td>
+        <td class="text-end"><?= (int)$m['jumlah_jasa'] ?></td>
+        <td class="text-end fw-semibold"><?= rupiah($m['total_pendapatan']) ?></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+    <?php if ($rekap_mekanik): ?>
+    <tfoot><tr class="fw-bold table-light"><td>TOTAL</td><td class="text-end"><?= count($jasa_rows) ?></td><td class="text-end"><?= rupiah($tot_jasa) ?></td></tr></tfoot>
+    <?php endif; ?>
+  </table>
+  </div>
+</div></div>
+
+<div class="card table-card mt-3"><div class="card-body">
+  <h2 class="h6 mb-3" data-testid="mekanik-detail-title">Detail Jasa & Mekanik — <?= esc($label) ?></h2>
+  <div class="table-responsive">
+  <table class="table table-sm align-middle" data-testid="mekanik-detail-table">
+    <thead><tr><th>No</th><th>No. Nota</th><th>Tanggal</th><th>Mekanik</th><th>Nama Jasa</th><th class="text-end">Biaya</th></tr></thead>
+    <tbody>
+    <?php if (!$jasa_rows): ?><tr><td colspan="6" class="text-center text-muted">Tidak ada jasa pada periode ini.</td></tr><?php endif; ?>
+    <?php foreach ($jasa_rows as $i => $jr): ?>
+      <tr>
+        <td><?= $i + 1 ?></td>
+        <td><a href="index.php?page=receipt&id=<?= $jr['transaction_id'] ?>"><?= esc($jr['no_nota']) ?></a></td>
+        <td class="small"><?= esc(lokal($jr['created_at'])) ?></td>
+        <td><?= esc(trim((string)$jr['mekanik']) !== '' ? $jr['mekanik'] : '(Belum diisi)') ?></td>
+        <td><?= esc($jr['jasa_nama']) ?></td>
+        <td class="text-end"><?= rupiah($jr['subtotal']) ?></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
   </table>
   </div>
 </div></div>

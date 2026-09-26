@@ -275,3 +275,41 @@ function laporan_transaksi(string $dari, string $sampai): array {
     $stmt->execute([$su, $eu]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
+
+// Ambil seluruh baris JASA (tipe='jasa') dalam rentang tanggal, lengkap dengan
+// info transaksi (no. nota, tanggal, pelanggan, plat) dan nama mekanik yang
+// mengerjakan. Dipakai utk menampilkan Mekanik + Jasa pada halaman & unduhan
+// Rekap Laporan Transaksi.
+function laporan_jasa_mekanik(string $dari, string $sampai): array {
+    [$su, $eu] = wib_range_utc($dari, $sampai);
+    $stmt = db()->prepare("SELECT ti.nama AS jasa_nama, ti.subtotal, ti.mekanik,
+            t.id AS transaction_id, t.no_nota, t.created_at,
+            c.nama AS customer_nama, v.plat_nomor
+        FROM transaction_items ti
+        JOIN transactions t ON t.id = ti.transaction_id
+        JOIN customers c ON c.id = t.customer_id
+        LEFT JOIN vehicles v ON v.id = t.vehicle_id
+        WHERE ti.tipe = 'jasa' AND t.created_at >= ? AND t.created_at < ?
+        ORDER BY t.created_at, ti.id");
+    $stmt->execute([$su, $eu]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// Kalkulasi otomatis: kelompokkan baris jasa (hasil laporan_jasa_mekanik) per
+// nama mekanik -> jumlah pekerjaan & total pendapatan jasa yang dihasilkan.
+// Baris tanpa nama mekanik (belum diisi saat transaksi) tetap ikut dihitung
+// di bawah label "(Belum diisi)" agar total pendapatan jasa tetap balance.
+function rekap_pendapatan_mekanik(array $jasa_rows): array {
+    $rekap = [];
+    foreach ($jasa_rows as $r) {
+        $nama = trim((string)($r['mekanik'] ?? '')) !== '' ? trim($r['mekanik']) : '(Belum diisi)';
+        if (!isset($rekap[$nama])) {
+            $rekap[$nama] = ['mekanik' => $nama, 'jumlah_jasa' => 0, 'total_pendapatan' => 0.0];
+        }
+        $rekap[$nama]['jumlah_jasa']++;
+        $rekap[$nama]['total_pendapatan'] += (float)$r['subtotal'];
+    }
+    $rekap = array_values($rekap);
+    usort($rekap, fn($a, $b) => $b['total_pendapatan'] <=> $a['total_pendapatan']);
+    return $rekap;
+}

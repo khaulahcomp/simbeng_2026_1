@@ -18,6 +18,18 @@ if (!in_array($type, ['transactions', 'parts', 'stock', 'finance', 'debts', 'cus
 if (!in_array($format, ['xls', 'doc', 'pdf'], true)) $format = 'pdf';
 [, $dari, $sampai, $label] = resolve_periode();
 
+// Sheet/bagian tambahan (mis. Rekap Mekanik). Diisi khusus oleh laporan yang
+// membutuhkannya (lihat cabang transaksi di bawah); tampil sbg sheet ke-2 pada
+// unduhan Excel, dan sbg bagian tambahan pada unduhan PDF/Word.
+$extra_sheets = [];
+
+// Nama sheet Excel maksimal 31 karakter & tidak boleh memuat : \ / ? * [ ]
+function xls_safe_sheet_name(string $name): string {
+    $name = str_replace([':', '\\', '/', '?', '*', '[', ']'], '-', $name);
+    $name = trim($name);
+    return $name !== '' ? mb_substr($name, 0, 31) : 'Sheet';
+}
+
 // ---- Siapkan data sesuai jenis laporan ----
 if ($type === 'parts') {
     // scope=page -> hanya baris yang sedang tampil pada halaman aktif menu
@@ -214,17 +226,66 @@ if ($type === 'parts') {
 } else {
     $judul = 'Laporan Transaksi';
     $subjudul = 'Periode: ' . $label;
-    $headers = ['No','No. Nota','Tanggal','Pelanggan','Plat','Jasa','Sparepart','Total'];
+    $headers = ['No','No. Nota','Tanggal','Pelanggan','Plat','Mekanik','Jasa','Sparepart','Total'];
     $rows = laporan_transaksi($dari, $sampai);
+
+    // ---- Mekanik & Jasa: data sama seperti tampilan on-screen menu Rekap &
+    // Laporan Transaksi (reports.php), supaya unduhan konsisten dgn layar. ----
+    $jasa_rows = laporan_jasa_mekanik($dari, $sampai);
+    $rekap_mekanik = rekap_pendapatan_mekanik($jasa_rows);
+    $mekanik_by_trx = [];
+    foreach ($jasa_rows as $jr) {
+        $nm = trim((string)($jr['mekanik'] ?? ''));
+        if ($nm === '') continue;
+        $tid = $jr['transaction_id'];
+        if (!isset($mekanik_by_trx[$tid])) $mekanik_by_trx[$tid] = [];
+        if (!in_array($nm, $mekanik_by_trx[$tid], true)) $mekanik_by_trx[$tid][] = $nm;
+    }
+
     $data = [];
     $no = 1; $tj = 0; $tp = 0; $ta = 0;
     foreach ($rows as $r) {
         $tj += $r['total_jasa']; $tp += $r['total_part']; $ta += $r['grand_total'];
         $data[] = [$no++, $r['no_nota'], lokal($r['created_at']), $r['customer_nama'], $r['plat_nomor'] ?: '-',
+                   implode(', ', $mekanik_by_trx[$r['id']] ?? []) ?: '-',
                    rupiah($r['total_jasa']), rupiah($r['total_part']), rupiah($r['grand_total'])];
     }
-    $footer = ['', 'TOTAL (' . count($rows) . ' transaksi)', '', '', '', rupiah($tj), rupiah($tp), rupiah($ta)];
+    $footer = ['', 'TOTAL (' . count($rows) . ' transaksi)', '', '', '', '', rupiah($tj), rupiah($tp), rupiah($ta)];
     $fname = 'laporan_transaksi_' . $dari . '_sd_' . $sampai;
+
+    // ---- Sheet ke-2: Rekap Pendapatan per Mekanik + Detail Jasa & Mekanik ----
+    $sheet2  = '<h3 style="margin:14px 0 6px">Rekap Pendapatan per Mekanik</h3>';
+    $sheet2 .= '<p style="margin:0 0 8px;font-size:12px;color:#555">Periode: ' . esc($label) . '</p>';
+    $sheet2 .= '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:70%;font-size:13px">';
+    $sheet2 .= '<thead><tr style="background:#1e2a38;color:#fff"><th>Mekanik</th><th>Jumlah Jasa</th><th>Total Pendapatan Jasa</th></tr></thead><tbody>';
+    if (!$rekap_mekanik) {
+        $sheet2 .= '<tr><td colspan="3" align="center">Belum ada jasa dengan mekanik pada periode ini.</td></tr>';
+    }
+    foreach ($rekap_mekanik as $m) {
+        $sheet2 .= '<tr><td>' . esc($m['mekanik']) . '</td><td align="right">' . (int)$m['jumlah_jasa']
+                 . '</td><td align="right">' . esc(rupiah($m['total_pendapatan'])) . '</td></tr>';
+    }
+    if ($rekap_mekanik) {
+        $sheet2 .= '<tr style="font-weight:bold;background:#eeeeee"><td>TOTAL</td><td align="right">' . count($jasa_rows)
+                 . '</td><td align="right">' . esc(rupiah($tj)) . '</td></tr>';
+    }
+    $sheet2 .= '</tbody></table>';
+
+    $sheet2 .= '<h3 style="margin:20px 0 6px">Detail Jasa &amp; Mekanik</h3>';
+    $sheet2 .= '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px">';
+    $sheet2 .= '<thead><tr style="background:#1e2a38;color:#fff"><th>No</th><th>No. Nota</th><th>Tanggal</th><th>Mekanik</th><th>Nama Jasa</th><th>Biaya</th></tr></thead><tbody>';
+    if (!$jasa_rows) {
+        $sheet2 .= '<tr><td colspan="6" align="center">Tidak ada jasa pada periode ini.</td></tr>';
+    }
+    $no2 = 1;
+    foreach ($jasa_rows as $jr) {
+        $sheet2 .= '<tr><td>' . ($no2++) . '</td><td>' . esc($jr['no_nota']) . '</td><td>' . esc(lokal($jr['created_at']))
+                 . '</td><td>' . esc(trim((string)$jr['mekanik']) !== '' ? $jr['mekanik'] : '(Belum diisi)')
+                 . '</td><td>' . esc($jr['jasa_nama']) . '</td><td align="right">' . esc(rupiah($jr['subtotal'])) . '</td></tr>';
+    }
+    $sheet2 .= '</tbody></table>';
+
+    $extra_sheets[] = ['name' => 'Rekap Mekanik', 'html' => $sheet2];
 }
 
 // ---- Bangun tabel HTML (dipakai oleh semua format) ----
@@ -251,17 +312,41 @@ if ($footer) {
 $html .= '</tbody></table>';
 }
 
+// ---- Gabungkan bagian tambahan (mis. Rekap Mekanik) jadi satu string HTML,
+// dipakai sbg lampiran tambahan pada unduhan PDF & Word. ----
+$extra_html = '';
+foreach ($extra_sheets as $s) $extra_html .= $s['html'];
+
 // ---- Output sesuai format ----
 if ($format === 'xls') {
     header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
     header('Content-Disposition: attachment; filename="' . $fname . '.xls"');
-    echo "\xEF\xBB\xBF" . $html; // BOM agar karakter UTF-8 terbaca benar di Excel
+    echo "\xEF\xBB\xBF"; // BOM agar karakter UTF-8 terbaca benar di Excel
+    if ($extra_sheets) {
+        // Ada bagian tambahan -> tulis sbg WORKBOOK Excel dgn lebih dari 1 SHEET
+        // (metadata x:ExcelWorksheet ini murni markup, tanpa library eksternal).
+        $sheet_names = [xls_safe_sheet_name($judul)];
+        foreach ($extra_sheets as $s) $sheet_names[] = xls_safe_sheet_name($s['name']);
+        echo '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
+        echo '<head><meta charset="UTF-8">';
+        echo '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>';
+        foreach ($sheet_names as $sn) {
+            echo '<x:ExcelWorksheet><x:Name>' . esc($sn) . '</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet>';
+        }
+        echo '</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->';
+        echo '</head><body>';
+        echo $html;
+        echo $extra_html;
+        echo '</body></html>';
+    } else {
+        echo $html;
+    }
     exit;
 }
 if ($format === 'doc') {
     header('Content-Type: application/msword; charset=UTF-8');
     header('Content-Disposition: attachment; filename="' . $fname . '.doc"');
-    echo "\xEF\xBB\xBF<html><head><meta charset=\"UTF-8\"></head><body>$html</body></html>";
+    echo "\xEF\xBB\xBF<html><head><meta charset=\"UTF-8\"></head><body>$html$extra_html</body></html>";
     exit;
 }
 // format=pdf: halaman cetak (pilih "Save as PDF" pada dialog print browser)
@@ -283,6 +368,7 @@ if ($format === 'doc') {
   <span style="font-size:12px;color:#666">Pada dialog cetak, pilih tujuan <strong>"Save as PDF"</strong> untuk mengunduh file PDF.</span>
 </div>
 <?= $html ?>
+<?= $extra_html ?>
 <script>window.addEventListener('load', () => window.print());</script>
 </body>
 </html>
