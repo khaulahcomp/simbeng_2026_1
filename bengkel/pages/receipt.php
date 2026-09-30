@@ -89,19 +89,17 @@ $wa[] = "Faktur (gambar) terlampir. Simpan sebagai bukti yang sah. Sampai jumpa 
 $wa_text = implode("\n", $wa);
 $wa_url  = 'https://wa.me/' . $wa_number . '?text=' . rawurlencode($wa_text);
 
-// ---- Nama mekanik (dari dropdown Pengguna role=mekanik / ketik manual per baris jasa) ----
+// ---- Nama mekanik: 1 faktur = 1 mekanik (yang dipilih pertama) ----
 $has_jasa = false;
-$mekanik_list = [];
+$mekanik_display = '';
 foreach ($items as $it) {
     if ($it['tipe'] === 'jasa') {
         $has_jasa = true;
-        if (trim($it['mekanik'] ?? '') !== '') {
-            $nm = trim($it['mekanik']);
-            if (!in_array($nm, $mekanik_list, true)) $mekanik_list[] = $nm;
+        if ($mekanik_display === '' && trim($it['mekanik'] ?? '') !== '') {
+            $mekanik_display = trim($it['mekanik']);
         }
     }
 }
-$mekanik_display = implode(', ', $mekanik_list);
 
 // Warna stempel
 $stamp_color = $is_lunas ? '#198754' : '#dc3545';
@@ -221,9 +219,6 @@ $stempel_ok  = $stempel_img && is_file(__DIR__ . '/../' . $stempel_img);
           <?php endif; ?>
           <?php if ((int)$it['garansi_hari'] > 0): ?>
             <div style="font-size:9.5px;color:#555">Garansi <?= (int)$it['garansi_hari'] ?> hari s.d. <?= date('d/m/Y', strtotime(lokal($t['created_at'], 'Y-m-d') . " +{$it['garansi_hari']} days")) ?></div>
-          <?php endif; ?>
-          <?php if ($it['tipe'] === 'jasa' && trim($it['mekanik'] ?? '') !== ''): ?>
-            <div style="font-size:9.5px;color:#555"><i>Mekanik: <?= esc(trim($it['mekanik'])) ?></i></div>
           <?php endif; ?>
         </td>
         <td class="ctr"><?= (int)$it['qty'] ?></td>

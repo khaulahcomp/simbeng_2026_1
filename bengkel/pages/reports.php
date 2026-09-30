@@ -13,16 +13,8 @@ $tot_all  = array_sum(array_column($rows, 'grand_total'));
 // ---- Mekanik & Jasa: detail per baris jasa + rekap otomatis per mekanik ----
 $jasa_rows = laporan_jasa_mekanik($dari, $sampai);
 $rekap_mekanik = rekap_pendapatan_mekanik($jasa_rows);
-// Nama mekanik per transaksi (gabungan, unik) - dipakai utk kolom "Mekanik"
-// pada tabel utama, agar langsung terlihat tanpa buka nota.
-$mekanik_by_trx = [];
-foreach ($jasa_rows as $jr) {
-    $nm = trim((string)($jr['mekanik'] ?? ''));
-    if ($nm === '') continue;
-    $tid = $jr['transaction_id'];
-    if (!isset($mekanik_by_trx[$tid])) $mekanik_by_trx[$tid] = [];
-    if (!in_array($nm, $mekanik_by_trx[$tid], true)) $mekanik_by_trx[$tid][] = $nm;
-}
+// Mekanik per faktur (1 faktur = 1 mekanik) - dipakai utk kolom "Mekanik" tabel utama.
+$mekanik_by_trx = mekanik_per_transaksi($jasa_rows);
 // Bawa hanya parameter filter yang relevan ke tautan export
 $export_qs = http_build_query(array_merge(
     array_intersect_key($_GET, array_flip(['periode', 'tanggal', 'bulan', 'tahun', 'dari', 'sampai'])),
@@ -99,7 +91,7 @@ $export_qs = http_build_query(array_merge(
         <td class="small"><?= esc(lokal($r['created_at'])) ?></td>
         <td><?= esc($r['customer_nama']) ?></td>
         <td><?= esc($r['plat_nomor'] ?? '-') ?></td>
-        <td class="small" data-testid="report-mekanik-<?= $r['id'] ?>"><?= esc(implode(', ', $mekanik_by_trx[$r['id']] ?? []) ?: '-') ?></td>
+        <td class="small" data-testid="report-mekanik-<?= $r['id'] ?>"><?= esc($mekanik_by_trx[$r['id']] ?? '-') ?></td>
         <td class="text-end"><?= rupiah($r['total_jasa']) ?></td>
         <td class="text-end"><?= rupiah($r['total_part']) ?></td>
         <td class="text-end fw-semibold"><?= rupiah($r['grand_total']) ?></td>
@@ -129,7 +121,7 @@ $export_qs = http_build_query(array_merge(
     <?php endforeach; ?>
     </tbody>
     <?php if ($rekap_mekanik): ?>
-    <tfoot><tr class="fw-bold table-light"><td>TOTAL</td><td class="text-end"><?= count($jasa_rows) ?></td><td class="text-end"><?= rupiah($tot_jasa) ?></td></tr></tfoot>
+    <tfoot><tr class="fw-bold table-light"><td>TOTAL</td><td class="text-end"><?= jumlah_faktur_jasa($jasa_rows) ?></td><td class="text-end"><?= rupiah($tot_jasa) ?></td></tr></tfoot>
     <?php endif; ?>
   </table>
   </div>

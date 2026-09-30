@@ -18,9 +18,9 @@ if (!in_array($type, ['transactions', 'parts', 'stock', 'finance', 'debts', 'cus
 if (!in_array($format, ['xls', 'doc', 'pdf'], true)) $format = 'pdf';
 [, $dari, $sampai, $label] = resolve_periode();
 
-// Sheet/bagian tambahan (mis. Rekap Mekanik). Diisi khusus oleh laporan yang
-// membutuhkannya (lihat cabang transaksi di bawah); tampil sbg sheet ke-2 pada
-// unduhan Excel, dan sbg bagian tambahan pada unduhan PDF/Word.
+// Bagian tambahan (Rekap Pendapatan per Mekanik + Detail Jasa & Mekanik).
+// Ditampilkan di BAWAH tabel utama pada SATU sheet yang sama (Excel), PDF, dan Word.
+// Tidak lagi dibuat sebagai sheet terpisah "Rekap Mekanik".
 $extra_sheets = [];
 
 // Nama sheet Excel maksimal 31 karakter & tidak boleh memuat : \ / ? * [ ]
@@ -233,21 +233,15 @@ if ($type === 'parts') {
     // Laporan Transaksi (reports.php), supaya unduhan konsisten dgn layar. ----
     $jasa_rows = laporan_jasa_mekanik($dari, $sampai);
     $rekap_mekanik = rekap_pendapatan_mekanik($jasa_rows);
-    $mekanik_by_trx = [];
-    foreach ($jasa_rows as $jr) {
-        $nm = trim((string)($jr['mekanik'] ?? ''));
-        if ($nm === '') continue;
-        $tid = $jr['transaction_id'];
-        if (!isset($mekanik_by_trx[$tid])) $mekanik_by_trx[$tid] = [];
-        if (!in_array($nm, $mekanik_by_trx[$tid], true)) $mekanik_by_trx[$tid][] = $nm;
-    }
+    // 1 faktur = 1 mekanik (yang dipilih pertama)
+    $mekanik_by_trx = mekanik_per_transaksi($jasa_rows);
 
     $data = [];
     $no = 1; $tj = 0; $tp = 0; $ta = 0;
     foreach ($rows as $r) {
         $tj += $r['total_jasa']; $tp += $r['total_part']; $ta += $r['grand_total'];
         $data[] = [$no++, $r['no_nota'], lokal($r['created_at']), $r['customer_nama'], $r['plat_nomor'] ?: '-',
-                   implode(', ', $mekanik_by_trx[$r['id']] ?? []) ?: '-',
+                   $mekanik_by_trx[$r['id']] ?? '-',
                    rupiah($r['total_jasa']), rupiah($r['total_part']), rupiah($r['grand_total'])];
     }
     $footer = ['', 'TOTAL (' . count($rows) . ' transaksi)', '', '', '', '', rupiah($tj), rupiah($tp), rupiah($ta)];
@@ -266,7 +260,7 @@ if ($type === 'parts') {
                  . '</td><td align="right">' . esc(rupiah($m['total_pendapatan'])) . '</td></tr>';
     }
     if ($rekap_mekanik) {
-        $sheet2 .= '<tr style="font-weight:bold;background:#eeeeee"><td>TOTAL</td><td align="right">' . count($jasa_rows)
+        $sheet2 .= '<tr style="font-weight:bold;background:#eeeeee"><td>TOTAL</td><td align="right">' . jumlah_faktur_jasa($jasa_rows)
                  . '</td><td align="right">' . esc(rupiah($tj)) . '</td></tr>';
     }
     $sheet2 .= '</tbody></table>';
@@ -285,7 +279,7 @@ if ($type === 'parts') {
     }
     $sheet2 .= '</tbody></table>';
 
-    $extra_sheets[] = ['name' => 'Rekap Mekanik', 'html' => $sheet2];
+    $extra_sheets[] = ['name' => 'Rekap Mekanik (digabung ke sheet utama)', 'html' => $sheet2];
 }
 
 // ---- Bangun tabel HTML (dipakai oleh semua format) ----
@@ -322,25 +316,16 @@ if ($format === 'xls') {
     header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
     header('Content-Disposition: attachment; filename="' . $fname . '.xls"');
     echo "\xEF\xBB\xBF"; // BOM agar karakter UTF-8 terbaca benar di Excel
-    if ($extra_sheets) {
-        // Ada bagian tambahan -> tulis sbg WORKBOOK Excel dgn lebih dari 1 SHEET
-        // (metadata x:ExcelWorksheet ini murni markup, tanpa library eksternal).
-        $sheet_names = [xls_safe_sheet_name($judul)];
-        foreach ($extra_sheets as $s) $sheet_names[] = xls_safe_sheet_name($s['name']);
-        echo '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
-        echo '<head><meta charset="UTF-8">';
-        echo '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>';
-        foreach ($sheet_names as $sn) {
-            echo '<x:ExcelWorksheet><x:Name>' . esc($sn) . '</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet>';
-        }
-        echo '</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->';
-        echo '</head><body>';
-        echo $html;
-        echo $extra_html;
-        echo '</body></html>';
-    } else {
-        echo $html;
-    }
+    // Excel: HANYA 1 sheet "Laporan Transaksi"; rekap & detail mekanik ada di bawah tabel utama.
+    echo '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
+    echo '<head><meta charset="UTF-8">';
+    echo '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>';
+    echo '<x:ExcelWorksheet><x:Name>' . esc(xls_safe_sheet_name($judul)) . '</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet>';
+    echo '</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->';
+    echo '</head><body>';
+    echo $html;
+    echo $extra_html;
+    echo '</body></html>';
     exit;
 }
 if ($format === 'doc') {

@@ -14,8 +14,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
     $jasa_nama   = $_POST['jasa_nama'] ?? [];
     $jasa_biaya  = $_POST['jasa_biaya'] ?? [];
     $jasa_garansi= $_POST['jasa_garansi'] ?? [];
-    $jasa_mekanik_sel = $_POST['jasa_mekanik_select'] ?? [];
-    $jasa_mekanik_man = $_POST['jasa_mekanik_manual'] ?? [];
+    // 1 faktur = 1 mekanik: nama mekanik dipilih SEKALI utk seluruh item jasa.
+    $mekSel = trim((string)($_POST['mekanik_select'] ?? ''));
+    $mekanik_faktur = ($mekSel === '__LAINNYA__') ? trim((string)($_POST['mekanik_manual'] ?? '')) : $mekSel;
     $jasa_dj     = $_POST['jasa_diskon_jenis'] ?? [];
     $jasa_dn     = $_POST['jasa_diskon_nilai'] ?? [];
     $part_id     = $_POST['part_id'] ?? [];
@@ -57,9 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
         if ($nm === '' || $biaya <= 0) continue;
         [$dj, $dn, $disc] = $item_diskon($jasa_dj[$i] ?? '', $jasa_dn[$i] ?? 0, $biaya);
         $sub = $biaya - $disc;
-        $mekSel = trim($jasa_mekanik_sel[$i] ?? '');
-        $mekanik = ($mekSel === '__LAINNYA__') ? trim($jasa_mekanik_man[$i] ?? '') : $mekSel;
-        $items[] = ['tipe'=>'jasa', 'part_id'=>null, 'nama'=>$nm, 'qty'=>1, 'harga'=>$biaya, 'diskon_jenis'=>$dj, 'diskon_nilai'=>$dn, 'diskon'=>$disc, 'subtotal'=>$sub, 'garansi_hari'=>(int)($jasa_garansi[$i] ?? 0), 'mekanik'=>$mekanik];
+        $items[] = ['tipe'=>'jasa', 'part_id'=>null, 'nama'=>$nm, 'qty'=>1, 'harga'=>$biaya, 'diskon_jenis'=>$dj, 'diskon_nilai'=>$dn, 'diskon'=>$disc, 'subtotal'=>$sub, 'garansi_hari'=>(int)($jasa_garansi[$i] ?? 0), 'mekanik'=>$mekanik_faktur];
         $total_jasa += $sub;
     }
     // Kumpulkan item sparepart — kode/item yang sama digabung jadi satu baris
@@ -243,12 +242,18 @@ $mekanik_users = $db->query("SELECT nama FROM users WHERE role='mekanik' ORDER B
   </div>
 
   <h2 class="h6">Jasa Servis</h2>
+  <div class="row g-2 mb-2 align-items-center" data-testid="mekanik-faktur-row">
+    <div class="col-md-3 col-lg-2"><label class="form-label small fw-semibold mb-0">Nama Mekanik</label></div>
+    <div class="col-md-5 col-lg-4">
+      <div id="mekanikBox"></div>
+      <div class="form-text">1 faktur = 1 mekanik untuk semua jenis jasa (jasa &amp; biaya tetap dihitung semua).</div>
+    </div>
+  </div>
   <div class="row g-2 mb-1 d-none d-md-flex text-muted small fw-semibold" data-testid="jasa-header">
-    <div class="col-md-4">Nama Jasa</div>
-    <div class="col-md-1">Biaya</div>
+    <div class="col-md-5">Nama Jasa</div>
+    <div class="col-md-2">Biaya</div>
     <div class="col-md-2">Diskon (Rp / %)</div>
     <div class="col-md-1">Garansi (hari)</div>
-    <div class="col-md-2">Nama Mekanik</div>
     <div class="col-md-1 text-end">Total</div>
     <div class="col-md-1"></div>
   </div>
@@ -347,9 +352,9 @@ function escHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':
 // Daftar nama mekanik dari data Pengguna (role=mekanik), utk dropdown Jasa Servis.
 const MEKANIK_LIST = <?= json_encode($mekanik_users, JSON_UNESCAPED_UNICODE) ?>;
 
-// Dropdown pilih mekanik + fallback "ketik manual" (utk mekanik yg belum
-// terdaftar sbg Pengguna, atau data lama sebelum fitur dropdown ini ada).
-function mekanikSelectHtml(idx, selected) {
+// Dropdown pilih mekanik (SATU per faktur) + fallback "ketik manual" (utk mekanik
+// yg belum terdaftar sbg Pengguna, atau data lama sebelum fitur dropdown ini ada).
+function renderMekanik(selected) {
   selected = selected || '';
   const known = MEKANIK_LIST.includes(selected);
   let opts = '<option value="">- Pilih mekanik -</option>';
@@ -357,22 +362,23 @@ function mekanikSelectHtml(idx, selected) {
   opts += `<option value="__LAINNYA__" ${(!known && selected) ? 'selected' : ''}>+ Lainnya (ketik manual)</option>`;
   const manualVal = (!known && selected) ? selected : '';
   const manualHidden = (!known && selected) ? '' : 'd-none';
-  return `<select name="jasa_mekanik_select[]" class="form-select form-select-sm" onchange="jasaMekanikChange(this)" data-testid="jasa-mekanik-${idx}" title="Mekanik yang mengerjakan - tampil di faktur untuk tanda tangan">${opts}</select>
-    <input type="text" class="form-control form-control-sm mt-1 ${manualHidden}" name="jasa_mekanik_manual[]" placeholder="Ketik nama mekanik" value="${escHtml(manualVal)}" data-testid="jasa-mekanik-manual-${idx}">`;
+  document.getElementById('mekanikBox').innerHTML = `<select name="mekanik_select" class="form-select form-select-sm" onchange="mekanikChange(this)" data-testid="pos-mekanik" title="Mekanik yang mengerjakan - berlaku untuk semua jasa di faktur ini, tampil di faktur untuk tanda tangan">${opts}</select>
+    <input type="text" class="form-control form-control-sm mt-1 ${manualHidden}" name="mekanik_manual" placeholder="Ketik nama mekanik" value="${escHtml(manualVal)}" data-testid="pos-mekanik-manual">`;
 }
-function jasaMekanikChange(sel) {
+function mekanikChange(sel) {
   const manual = sel.nextElementSibling;
   if (!manual) return;
   if (sel.value === '__LAINNYA__') { manual.classList.remove('d-none'); manual.focus(); }
   else { manual.classList.add('d-none'); manual.value = ''; }
 }
-// Nilai mekanik efektif dari 1 baris jasa (dipakai saat simpan draft).
-function jasaMekanikCurrentValue(row) {
-  const sel = row.querySelector('[name="jasa_mekanik_select[]"]');
+// Nilai mekanik efektif faktur (dipakai saat simpan draft).
+function mekanikCurrentValue() {
+  const sel = document.querySelector('[name="mekanik_select"]');
   if (!sel) return '';
-  if (sel.value === '__LAINNYA__') return row.querySelector('[name="jasa_mekanik_manual[]"]')?.value || '';
+  if (sel.value === '__LAINNYA__') return document.querySelector('[name="mekanik_manual"]')?.value || '';
   return sel.value || '';
 }
+renderMekanik('');
 function debounce(fn, ms){ let t; return function(){ const a=arguments,c=this; clearTimeout(t); t=setTimeout(()=>fn.apply(c,a),ms); }; }
 // Pencarian sparepart server-side (indexed). Payload kecil (maks ~20 hasil).
 async function apiSearchParts(term){ try{ const r=await fetch('ajax/lookup.php?action=search_parts&q='+encodeURIComponent(term)); if(!r.ok) return []; return await r.json(); }catch(e){ return []; } }
@@ -391,16 +397,15 @@ document.getElementById('posCustomer').addEventListener('change', async function
   });
 });
 
-function addJasa(nama = '', biaya = '', garansi = 0, dj = '', dn = '', mekanik = '') {
+function addJasa(nama = '', biaya = '', garansi = 0, dj = '', dn = '') {
   const idx = document.querySelectorAll('.jasa-row').length;
   const div = document.createElement('div');
   div.className = 'row g-2 mb-2 align-items-center jasa-row';
   div.innerHTML = `
-    <div class="col-6 col-md-4"><input name="jasa_nama[]" class="form-control form-control-sm" placeholder="Ganti oli, tune-up..." value="${nama}" data-testid="jasa-nama-${idx}"></div>
-    <div class="col-6 col-md-1"><input name="jasa_biaya[]" type="number" min="0" class="form-control form-control-sm jasa-biaya" placeholder="Biaya" value="${biaya}" oninput="hitung()" data-testid="jasa-biaya-${idx}"></div>
+    <div class="col-6 col-md-5"><input name="jasa_nama[]" class="form-control form-control-sm" placeholder="Ganti oli, tune-up..." value="${nama}" data-testid="jasa-nama-${idx}"></div>
+    <div class="col-6 col-md-2"><input name="jasa_biaya[]" type="number" min="0" class="form-control form-control-sm jasa-biaya" placeholder="Biaya" value="${biaya}" oninput="hitung()" data-testid="jasa-biaya-${idx}"></div>
     <div class="col-6 col-md-2">${diskonCell('jasa', idx, dj, dn)}</div>
     <div class="col-6 col-md-1"><input name="jasa_garansi[]" type="number" min="0" class="form-control form-control-sm" placeholder="Hari" value="${garansi}" data-testid="jasa-garansi-${idx}"></div>
-    <div class="col-6 col-md-2">${mekanikSelectHtml(idx, mekanik)}</div>
     <div class="col-8 col-md-1 text-end small fw-semibold item-total" data-testid="jasa-total-${idx}">Rp 0</div>
     <div class="col-4 col-md-1"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.jasa-row').remove();hitung()" data-testid="jasa-remove-${idx}"><i class="bi bi-x"></i></button></div>`;
   document.getElementById('jasaRows').appendChild(div);
@@ -736,8 +741,11 @@ EDIT_ITEMS.forEach(it => { if (it.tipe === 'part' && it.part_id) window.POS_OLD_
   const partIds = EDIT_ITEMS.filter(it => it.tipe === 'part' && it.part_id).map(it => it.part_id);
   const fetched = await apiPartsByIds(partIds);
   const byId = {}; fetched.forEach(p => { byId[p.id] = p; });
+  // 1 faktur = 1 mekanik: pakai mekanik jasa pertama yang terisi
+  const firstMek = (EDIT_ITEMS.find(it => it.tipe === 'jasa' && (it.mekanik || '').trim() !== '') || {}).mekanik || '';
+  renderMekanik(firstMek.trim());
   EDIT_ITEMS.forEach(it => {
-    if (it.tipe === 'jasa') { addJasa(it.nama, it.harga, it.garansi_hari, it.diskon_jenis || '', (it.diskon_jenis ? it.diskon_nilai : ''), it.mekanik || ''); }
+    if (it.tipe === 'jasa') { addJasa(it.nama, it.harga, it.garansi_hari, it.diskon_jenis || '', (it.diskon_jenis ? it.diskon_nilai : '')); }
     else {
       const p = byId[it.part_id] || { id: it.part_id, kode: '(part)', nama: it.nama, harga_jual: it.harga, stok: '-' };
       const sp = (parseFloat(it.special_price) > 0) ? it.special_price : '';
@@ -774,6 +782,7 @@ function serializeDraft() {
     metode: document.querySelector('input[name="metode_bayar"]:checked')?.value || 'cash',
     diskon_jenis: document.getElementById('diskonJenis').value,
     diskon_nilai: document.getElementById('diskonNilai').value,
+    mekanik: mekanikCurrentValue(),
     jasa: [], parts: []
   };
   document.querySelectorAll('.jasa-row').forEach(r => {
@@ -782,8 +791,7 @@ function serializeDraft() {
       biaya: r.querySelector('[name="jasa_biaya[]"]').value,
       dj: r.querySelector('.diskon-jenis')?.value || 'persen',
       dn: r.querySelector('.diskon-nilai')?.value || '',
-      garansi: r.querySelector('[name="jasa_garansi[]"]').value,
-      mekanik: jasaMekanikCurrentValue(r)
+      garansi: r.querySelector('[name="jasa_garansi[]"]').value
     });
   });
   document.querySelectorAll('.part-row').forEach(r => {
@@ -809,7 +817,10 @@ function saveDraft(submitted = false) {
 }
 async function restoreDraft(d) {
   document.querySelectorAll('.jasa-row,.part-row,.part-search-row').forEach(r => r.remove());
-  (d.jasa || []).forEach(j => addJasa(j.nama, j.biaya, j.garansi, j.dj, j.dn, j.mekanik));
+  // Draf lama menyimpan mekanik per baris -> ambil yang pertama terisi
+  const draftMek = (d.mekanik || ((d.jasa || []).find(j => (j.mekanik || '').trim() !== '') || {}).mekanik || '').trim();
+  renderMekanik(draftMek);
+  (d.jasa || []).forEach(j => addJasa(j.nama, j.biaya, j.garansi, j.dj, j.dn));
   (d.parts || []).forEach(p => addPartRow({ id: p.id, kode: '', nama: '', harga_jual: p.harga, stok: p.stok, _label: p.label }, p.qty, p.garansi, p.dj, p.dn, p.special));
   document.getElementById('diskonJenis').value = d.diskon_jenis || 'persen';
   document.getElementById('diskonNilai').value = d.diskon_nilai || '';

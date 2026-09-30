@@ -280,6 +280,10 @@ function laporan_transaksi(string $dari, string $sampai): array {
 // info transaksi (no. nota, tanggal, pelanggan, plat) dan nama mekanik yang
 // mengerjakan. Dipakai utk menampilkan Mekanik + Jasa pada halaman & unduhan
 // Rekap Laporan Transaksi.
+// ATURAN: 1 faktur = 1 mekanik. Bila (data lama) baris jasa dalam satu faktur
+// punya mekanik berbeda-beda, yang dipakai adalah mekanik PERTAMA yang terisi
+// (urut input) dan diterapkan ke semua baris jasa faktur tsb. Biaya tiap baris
+// jasa tetap apa adanya (semua tetap terkalkulasi).
 function laporan_jasa_mekanik(string $dari, string $sampai): array {
     [$su, $eu] = wib_range_utc($dari, $sampai);
     $stmt = db()->prepare("SELECT ti.nama AS jasa_nama, ti.subtotal, ti.mekanik,
@@ -290,23 +294,57 @@ function laporan_jasa_mekanik(string $dari, string $sampai): array {
         JOIN customers c ON c.id = t.customer_id
         LEFT JOIN vehicles v ON v.id = t.vehicle_id
         WHERE ti.tipe = 'jasa' AND t.created_at >= ? AND t.created_at < ?
-        ORDER BY t.created_at, ti.id");
+        ORDER BY t.created_at, t.id, ti.id");
     $stmt->execute([$su, $eu]);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Mekanik pertama yang terisi per faktur
+    $first = [];
+    foreach ($rows as $r) {
+        $tid = $r['transaction_id'];
+        $nm = trim((string)($r['mekanik'] ?? ''));
+        if ($nm !== '' && !isset($first[$tid])) $first[$tid] = $nm;
+    }
+    foreach ($rows as &$r) {
+        $r['mekanik'] = $first[$r['transaction_id']] ?? '';
+    }
+    unset($r);
+    return $rows;
+}
+
+// Peta id transaksi -> nama mekanik faktur tsb (1 faktur = 1 mekanik).
+function mekanik_per_transaksi(array $jasa_rows): array {
+    $map = [];
+    foreach ($jasa_rows as $r) {
+        $nm = trim((string)($r['mekanik'] ?? ''));
+        if ($nm !== '' && !isset($map[$r['transaction_id']])) $map[$r['transaction_id']] = $nm;
+    }
+    return $map;
+}
+
+// Jumlah faktur jasa (distinct) pada hasil laporan_jasa_mekanik().
+function jumlah_faktur_jasa(array $jasa_rows): int {
+    return count(array_unique(array_column($jasa_rows, 'transaction_id')));
 }
 
 // Kalkulasi otomatis: kelompokkan baris jasa (hasil laporan_jasa_mekanik) per
-// nama mekanik -> jumlah pekerjaan & total pendapatan jasa yang dihasilkan.
-// Baris tanpa nama mekanik (belum diisi saat transaksi) tetap ikut dihitung
-// di bawah label "(Belum diisi)" agar total pendapatan jasa tetap balance.
+// nama mekanik -> jumlah jasa & total pendapatan jasa yang dihasilkan.
+// - Jumlah Jasa dihitung PER FAKTUR (1 faktur = 1x jasa), bukan per item jasa.
+// - Total pendapatan = jumlah SEMUA biaya jasa pada faktur-faktur mekanik tsb.
+// Faktur tanpa nama mekanik tetap dihitung di bawah label "(Belum diisi)"
+// agar total pendapatan jasa tetap balance.
 function rekap_pendapatan_mekanik(array $jasa_rows): array {
     $rekap = [];
+    $seen = [];
     foreach ($jasa_rows as $r) {
         $nama = trim((string)($r['mekanik'] ?? '')) !== '' ? trim($r['mekanik']) : '(Belum diisi)';
         if (!isset($rekap[$nama])) {
             $rekap[$nama] = ['mekanik' => $nama, 'jumlah_jasa' => 0, 'total_pendapatan' => 0.0];
         }
-        $rekap[$nama]['jumlah_jasa']++;
+        if (!isset($seen[$nama][$r['transaction_id']])) {
+            $seen[$nama][$r['transaction_id']] = true;
+            $rekap[$nama]['jumlah_jasa']++;
+        }
         $rekap[$nama]['total_pendapatan'] += (float)$r['subtotal'];
     }
     $rekap = array_values($rekap);
