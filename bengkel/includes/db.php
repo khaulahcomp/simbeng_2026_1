@@ -24,7 +24,7 @@ date_default_timezone_set('Asia/Jakarta');
 // Versi skema aplikasi. Naikkan nilai ini bila ada perubahan
 // struktur/index agar migrasi dijalankan ulang SEKALI saja
 // (bukan pada tiap request pengguna).
-const APP_SCHEMA_VERSION = '2026.09.24.2';
+const APP_SCHEMA_VERSION = '2026.09.30.1';
 
 function db_config(): array {
     static $cfg = null;

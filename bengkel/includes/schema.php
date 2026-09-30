@@ -372,6 +372,18 @@ function run_full_migration(): void {
         add_index_if_missing($db, 'parts', 'idx_parts_low_stock', 'is_low_stock');
     }
 
+    // Rate limiting login: kunci sementara IP / username setelah beberapa kali
+    // gagal berturut-turut. Satu baris per (identifier_type, identifier_value).
+    $db->exec("CREATE TABLE IF NOT EXISTS login_attempts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        identifier_type VARCHAR(10) NOT NULL,
+        identifier_value VARCHAR(191) NOT NULL,
+        fail_count INT NOT NULL DEFAULT 0,
+        last_fail_at DATETIME NULL,
+        locked_until DATETIME NULL,
+        UNIQUE KEY uniq_login_identifier (identifier_type, identifier_value)
+    ) $eng");
+
     // ---- Seed data default (idempotent) ----
     if ((int) $db->query("SELECT COUNT(*) FROM users")->fetchColumn() === 0) {
         $stmt = $db->prepare("INSERT INTO users (username, password_hash, nama, role) VALUES (?,?,?,?)");

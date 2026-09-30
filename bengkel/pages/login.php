@@ -9,18 +9,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_verify_post();
     $username = trim($_POST['username'] ?? '');
     $password = $_POST['password'] ?? '';
-    $stmt = db()->prepare("SELECT * FROM users WHERE username = ?");
-    $stmt->execute([$username]);
-    $u = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($u && password_verify($password, $u['password_hash'])) {
-        // Cegah session fixation: perbarui ID sesi setelah login berhasil.
-        session_regenerate_id(true);
-        $_SESSION['user'] = ['id' => $u['id'], 'username' => $u['username'], 'nama' => $u['nama'], 'role' => $u['role']];
-        header('Location: index.php');
-        exit;
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+
+    // Rate limiting PER AKUN: bila username ini sedang terkunci (5x gagal
+    // berturut-turut), tolak TANPA memeriksa password sama sekali. Akun lain
+    // (role berbeda) di perangkat/IP yang sama TIDAK ikut terpengaruh.
+    $lockSec = login_lock_seconds_left($ip, $username);
+    if ($lockSec > 0) {
+        $lockMin = (int)ceil($lockSec / 60);
+        $error = "Akun ini terkunci sementara karena terlalu banyak percobaan gagal. Silakan coba lagi dalam $lockMin menit.";
+        if (function_exists('app_log')) app_log('security', "Login diblokir (rate limit) username=" . substr($username, 0, 60) . " ip=$ip sisa={$lockSec}s");
+    } else {
+        $stmt = db()->prepare("SELECT * FROM users WHERE username = ?");
+        $stmt->execute([$username]);
+        $u = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($u && password_verify($password, $u['password_hash'])) {
+            login_register_success($ip, $username);
+            // Cegah session fixation: perbarui ID sesi setelah login berhasil.
+            session_regenerate_id(true);
+            $_SESSION['user'] = ['id' => $u['id'], 'username' => $u['username'], 'nama' => $u['nama'], 'role' => $u['role']];
+            header('Location: index.php');
+            exit;
+        }
+        $failCount = login_register_fail($ip, $username);
+        if (function_exists('app_log')) app_log('auth', 'Login gagal untuk username=' . substr($username, 0, 60) . ' ip=' . $ip . " (percobaan ke-$failCount)");
+        if ($failCount >= LOGIN_MAX_ATTEMPTS) {
+            $error = 'Terlalu banyak percobaan gagal. Akun ini dikunci sementara selama ' . LOGIN_LOCK_MINUTES . ' menit. Akun dengan role lain tetap bisa login.';
+        } else {
+            $sisa = LOGIN_MAX_ATTEMPTS - $failCount;
+            $error = "Username atau password salah. Percobaan tersisa: $sisa.";
+        }
     }
-    if (function_exists('app_log')) app_log('auth', 'Login gagal untuk username=' . substr($username, 0, 60) . ' ip=' . ($_SERVER['REMOTE_ADDR'] ?? '?'));
-    $error = 'Username atau password salah.';
 }
 ?>
 <!DOCTYPE html>
