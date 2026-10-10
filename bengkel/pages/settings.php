@@ -7,6 +7,10 @@
 // ============================================================
 require_admin();
 
+// ---- Slider halaman login (tambah/ubah/hapus/urutkan slide) ----
+require_once __DIR__ . '/../includes/login_slides.php';
+login_slides_handle_post();
+
 // ---- Upload logo bengkel (JPG/PNG/WEBP/GIF, maks 2 MB) ----
 if (($_POST['action'] ?? '') === 'upload_logo') {
     $err = $_FILES['logo']['error'] ?? UPLOAD_ERR_NO_FILE;
@@ -281,6 +285,8 @@ $h2 = (int)setting('theme_h2', '232');
     </div></div>
   </div>
 </div>
+
+<?php login_slides_render_admin_card(); ?>
 
 <div class="row g-3 mt-1">
   <div class="col-lg-6">
