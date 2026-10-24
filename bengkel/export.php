@@ -84,11 +84,20 @@ if ($type === 'parts') {
 } elseif ($type === 'stock') {
     // ---- Laporan pergerakan stok: masuk / keluar / penjualan / garansi ----
     $jenis = $_GET['jenis'] ?? 'semua';
-    $dari = _valid_date($_GET['dari'] ?? '') ? $_GET['dari'] : date('Y-m-01');
-    $sampai = _valid_date($_GET['sampai'] ?? '') ? $_GET['sampai'] : date('Y-m-d');
+    $dari_ok   = _valid_date($_GET['dari'] ?? '');
+    $sampai_ok = _valid_date($_GET['sampai'] ?? '');
+    // Bila hanya salah satu diisi, lengkapi sisi lainnya secara wajar (bukan menukar).
+    $dari   = $dari_ok   ? $_GET['dari']   : date('Y-m-01', strtotime($sampai_ok ? $_GET['sampai'] : 'today'));
+    $sampai = $sampai_ok ? $_GET['sampai'] : date('Y-m-d');
     if ($dari > $sampai) [$dari, $sampai] = [$sampai, $dari];
-    $where = "DATE(sm.created_at + INTERVAL 7 HOUR) BETWEEN ? AND ?";
-    $params = [$dari, $sampai];
+    [$su, $eu] = wib_range_utc($dari, $sampai);
+    $where = "sm.created_at >= ? AND sm.created_at < ?";
+    $params = [$su, $eu];
+    $qx = trim($_GET['q'] ?? '');
+    if ($qx !== '') {
+        $where .= " AND (p.kode LIKE ? OR p.nama LIKE ? OR p.barcode LIKE ?)";
+        array_push($params, "%$qx%", "%$qx%", "%$qx%");
+    }
     $labelJenis = 'Semua Pergerakan';
     if ($jenis === 'masuk') { $where .= " AND sm.tipe='masuk'"; $labelJenis = 'Stok Masuk'; }
     elseif ($jenis === 'keluar') { $where .= " AND sm.tipe='keluar'"; $labelJenis = 'Stok Keluar'; }

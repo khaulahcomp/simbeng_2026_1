@@ -29,6 +29,8 @@ if (($_POST['action'] ?? '') === 'delete') {
         }
         $db->prepare("DELETE FROM stock_movements WHERE ref_type='penjualan' AND ref_id=?")->execute([$id]);
         $db->prepare("DELETE FROM transaction_items WHERE transaction_id=?")->execute([$id]);
+        require_once __DIR__ . '/../includes/invoice_debt.php';
+        delete_invoice_debt($db, $id); // piutang otomatis dari faktur ini ikut dihapus
         $db->prepare("DELETE FROM transactions WHERE id=?")->execute([$id]);
         $db->commit();
         set_flash('success', 'Transaksi dihapus dan stok sparepart dikembalikan.');

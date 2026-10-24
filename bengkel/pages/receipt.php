@@ -2,6 +2,7 @@
 // Faktur A4 Portrait — tampilan cetak (tanpa sidebar), border penuh pada item,
 // dengan stempel LUNAS/BELUM LUNAS yang menimpa border faktur (anti pemalsuan).
 $db = db();
+require_once __DIR__ . '/../includes/invoice_debt.php';
 $id = (int)($_GET['id'] ?? 0);
 $t = $db->prepare("SELECT t.*, c.nama AS customer_nama, c.telepon, c.alamat AS customer_alamat, v.merek, v.model, v.plat_nomor
     FROM transactions t JOIN customers c ON c.id=t.customer_id LEFT JOIN vehicles v ON v.id=t.vehicle_id WHERE t.id=?");
@@ -17,8 +18,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_s
     $sb = ($_POST['status_bayar'] ?? 'lunas') === 'belum' ? 'belum' : 'lunas';
     $jt = trim($_POST['jatuh_tempo'] ?? '');
     if ($sb === 'lunas') $jt = '';
-    $db->prepare("UPDATE transactions SET status_bayar=?, jatuh_tempo=? WHERE id=?")
-       ->execute([$sb, ($jt !== '' ? $jt : null), $id]);
+    if ($jt !== '' && !_valid_date($jt)) $jt = '';
+    $db->beginTransaction();
+    try {
+        $db->prepare("UPDATE transactions SET status_bayar=?, jatuh_tempo=? WHERE id=?")
+           ->execute([$sb, ($jt !== '' ? $jt : null), $id]);
+        // BELUM LUNAS -> otomatis tercatat sebagai piutang (identitas sesuai faktur);
+        // LUNAS -> piutang terkait ditutup.
+        sync_invoice_debt($db, $id);
+        $db->commit();
+    } catch (\Throwable $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        if (function_exists('app_log')) app_log('error', 'Sinkron piutang faktur gagal: ' . $e->getMessage());
+    }
     header("Location: index.php?page=receipt&id=$id"); exit;
 }
 $status_bayar = ($t['status_bayar'] ?? 'lunas') === 'belum' ? 'belum' : 'lunas';
@@ -294,6 +306,12 @@ $stempel_ok  = $stempel_img && is_file(__DIR__ . '/../' . $stempel_img);
         <button class="btn btn-primary btn-sm" data-testid="receipt-status-save"><i class="bi bi-check2 me-1"></i>Simpan Status</button>
       </div>
     </div>
+    <?php $inv_debt = get_invoice_debt($db, $id); if (!$is_lunas && $inv_debt): ?>
+    <div class="small mt-2 text-danger" data-testid="receipt-piutang-info">
+      <i class="bi bi-journal-check me-1"></i>Tercatat otomatis di <a href="index.php?page=debts&amp;jenis=piutang">Hutang Piutang</a> sebagai piutang
+      <strong><?= esc($t['customer_nama']) ?></strong> &mdash; sisa <?= rupiah((float)$inv_debt['jumlah'] - (float)$inv_debt['dibayar']) ?>.
+    </div>
+    <?php endif; ?>
   </form>
   <div class="d-flex flex-wrap gap-2">
     <button onclick="window.print()" class="btn btn-primary btn-sm" data-testid="print-btn"><i class="bi bi-printer"></i> Cetak A4 Portrait</button>

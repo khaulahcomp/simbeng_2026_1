@@ -165,6 +165,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
                 $insMov->execute([$it['part_id'], 'keluar', $it['qty'], 'penjualan', $trx_id, "Nota $no_nota"]);
             }
         }
+        // Faktur belum lunas yang diedit: perbarui nominal/identitas piutang terkait.
+        require_once __DIR__ . '/../includes/invoice_debt.php';
+        if ($edit_id) sync_invoice_debt($db, $trx_id);
         $db->commit();
         header('Location: index.php?page=receipt&id=' . $trx_id); exit;
     } catch (Exception $e) {

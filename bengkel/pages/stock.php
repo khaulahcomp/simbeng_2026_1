@@ -105,7 +105,14 @@ if (!in_array($jenis, $allowedJenis, true)) $jenis = 'semua';
 $allowedPer = [10, 25, 50, 100];
 $per = (int)($_GET['per_page'] ?? 25);
 if (!in_array($per, $allowedPer, true)) $per = 25;
+// Rentang tanggal (WIB, inklusif). Kosong = tidak dibatasi. Nilai dipertahankan
+// pada form, pagination, dan unduhan (tidak lagi kembali ke tanggal 01).
+$dari   = _valid_date($_GET['dari']   ?? '') ? $_GET['dari']   : '';
+$sampai = _valid_date($_GET['sampai'] ?? '') ? $_GET['sampai'] : '';
+if ($dari !== '' && $sampai !== '' && $dari > $sampai) [$dari, $sampai] = [$sampai, $dari];
 $conds = []; $params = [];
+if ($dari !== '')   { [$d_su, ]  = wib_range_utc($dari, $dari);     $conds[] = "sm.created_at >= ?"; $params[] = $d_su; }
+if ($sampai !== '') { [, $d_eu] = wib_range_utc($sampai, $sampai); $conds[] = "sm.created_at < ?";  $params[] = $d_eu; }
 if ($q !== '') {
     $conds[] = "(p.kode LIKE ? OR p.nama LIKE ? OR p.barcode LIKE ?)";
     array_push($params, "%$q%", "%$q%", "%$q%");
@@ -272,15 +279,12 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
         <h2 class="h6 mb-0">Riwayat Pergerakan Stok</h2>
         <form class="d-flex gap-1 flex-wrap align-items-center" method="get" action="export.php" target="_blank" data-testid="stock-export-form">
           <input type="hidden" name="type" value="stock">
-          <select name="jenis" class="form-select form-select-sm" style="width:auto" data-testid="stock-export-jenis">
-            <option value="semua">Semua</option>
-            <option value="masuk">Stok Masuk</option>
-            <option value="keluar">Stok Keluar</option>
-            <option value="penjualan">Penjualan</option>
-            <option value="garansi">Garansi</option>
-          </select>
-          <input type="date" name="dari" class="form-control form-control-sm" style="width:auto" value="<?= date('Y-m-01') ?>" data-testid="stock-export-dari">
-          <input type="date" name="sampai" class="form-control form-control-sm" style="width:auto" value="<?= date('Y-m-d') ?>" data-testid="stock-export-sampai">
+          <!-- Unduhan mengikuti filter di bawah (jenis, rentang tanggal, kata kunci). -->
+          <input type="hidden" name="jenis" value="<?= esc($jenis) ?>" data-testid="stock-export-jenis">
+          <input type="hidden" name="dari" value="<?= esc($dari) ?>" data-testid="stock-export-dari">
+          <input type="hidden" name="sampai" value="<?= esc($sampai) ?>" data-testid="stock-export-sampai">
+          <input type="hidden" name="q" value="<?= esc($q) ?>">
+          <span class="small text-muted">Unduh sesuai filter:</span>
           <button name="format" value="pdf" class="btn btn-sm btn-outline-danger" title="Unduh PDF" data-testid="stock-export-pdf"><i class="bi bi-file-earmark-pdf"></i></button>
           <button name="format" value="xls" class="btn btn-sm btn-outline-success" title="Unduh Excel" data-testid="stock-export-xls"><i class="bi bi-file-earmark-excel"></i></button>
           <button name="format" value="doc" class="btn btn-sm btn-outline-primary" title="Unduh Word" data-testid="stock-export-doc"><i class="bi bi-file-earmark-word"></i></button>
@@ -288,11 +292,21 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
       </div>
       <form class="row g-2 align-items-end mb-3" method="get" data-testid="stock-search-form">
         <input type="hidden" name="page" value="stock">
-        <div class="col-sm-5">
+        <!-- Baris 1: kata kunci + rentang tanggal -->
+        <div class="col-12 col-lg-6">
           <label class="form-label small mb-1">Cari Kode / Nama Part</label>
           <input type="text" name="q" value="<?= esc($q) ?>" class="form-control form-control-sm" placeholder="Ketik kode part atau nama sparepart..." data-testid="stock-search-q">
         </div>
-        <div class="col-sm-3">
+        <div class="col-6 col-lg-3">
+          <label class="form-label small mb-1">Dari Tanggal</label>
+          <input type="date" name="dari" value="<?= esc($dari) ?>" class="form-control form-control-sm" data-testid="stock-search-dari">
+        </div>
+        <div class="col-6 col-lg-3">
+          <label class="form-label small mb-1">Sampai Tanggal</label>
+          <input type="date" name="sampai" value="<?= esc($sampai) ?>" class="form-control form-control-sm" data-testid="stock-search-sampai">
+        </div>
+        <!-- Baris 2: jenis + per halaman + tombol aksi (sejajar, tidak keluar kartu) -->
+        <div class="col-7 col-lg-4">
           <label class="form-label small mb-1">Jenis Pergerakan</label>
           <select name="jenis" class="form-select form-select-sm" onchange="this.form.submit()" data-testid="stock-search-jenis">
             <?php foreach ([
@@ -306,19 +320,19 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
             <?php endforeach; ?>
           </select>
         </div>
-        <div class="col-sm-2">
+        <div class="col-5 col-lg-3">
           <label class="form-label small mb-1">Tampil / halaman</label>
           <select name="per_page" class="form-select form-select-sm" onchange="this.form.submit()" data-testid="stock-search-perpage">
             <?php foreach ($allowedPer as $pp): ?><option value="<?= $pp ?>" <?= $per===$pp?'selected':'' ?>><?= $pp ?> data</option><?php endforeach; ?>
           </select>
         </div>
-        <div class="col-sm-2 d-flex gap-1">
-          <button class="btn btn-sm btn-primary" data-testid="stock-search-btn"><i class="bi bi-search me-1"></i>Cari</button>
-          <?php if ($q !== '' || $jenis !== 'semua'): ?><a href="index.php?page=stock" class="btn btn-sm btn-outline-secondary" data-testid="stock-search-reset">Reset</a><?php endif; ?>
+        <div class="col-12 col-lg-5 d-flex gap-2">
+          <button class="btn btn-sm btn-primary flex-fill" data-testid="stock-search-btn"><i class="bi bi-search me-1"></i>Cari</button>
+          <?php if ($q !== '' || $jenis !== 'semua' || $dari !== '' || $sampai !== ''): ?><a href="index.php?page=stock" class="btn btn-sm btn-outline-secondary flex-fill" data-testid="stock-search-reset"><i class="bi bi-arrow-counterclockwise me-1"></i>Reset</a><?php endif; ?>
         </div>
       </form>
       <?php $jenisLbl = ['semua'=>'Semua','masuk'=>'Stok Masuk','keluar'=>'Stok Keluar','penjualan'=>'Penjualan','garansi'=>'Garansi'][$jenis]; ?>
-      <div class="small text-muted mb-2" data-testid="stock-log-count">Menampilkan <?= count($log) ?> dari <?= $totalRows ?> data<?= $q !== '' ? ' (cari: "' . esc($q) . '")' : '' ?><?= $jenis !== 'semua' ? ' (jenis: ' . esc($jenisLbl) . ')' : '' ?>.</div>
+      <div class="small text-muted mb-2" data-testid="stock-log-count">Menampilkan <?= count($log) ?> dari <?= $totalRows ?> data<?= $q !== '' ? ' (cari: "' . esc($q) . '")' : '' ?><?= $jenis !== 'semua' ? ' (jenis: ' . esc($jenisLbl) . ')' : '' ?><?= ($dari !== '' || $sampai !== '') ? ' (periode: ' . ($dari !== '' ? esc(date('d/m/Y', strtotime($dari))) : 'awal') . ' s.d. ' . ($sampai !== '' ? esc(date('d/m/Y', strtotime($sampai))) : 'sekarang') . ')' : '' ?>.</div>
       <div class="table-responsive">
       <table class="table table-sm align-middle" data-testid="stock-log-table">
         <thead><tr><th>Tanggal</th><th>Barang</th><th>Tipe</th><th class="text-end">Jumlah</th><th>Supplier/Sumber</th><th>Keterangan</th></tr></thead>
@@ -339,7 +353,7 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
         </tbody>
       </table>
       </div>
-      <?php if ($totalPages > 1): $qs = 'page=stock&q=' . urlencode($q) . '&jenis=' . urlencode($jenis) . '&per_page=' . $per; ?>
+      <?php if ($totalPages > 1): $qs = 'page=stock&q=' . urlencode($q) . '&jenis=' . urlencode($jenis) . '&dari=' . urlencode($dari) . '&sampai=' . urlencode($sampai) . '&per_page=' . $per; ?>
       <nav class="d-flex justify-content-between align-items-center mt-2" data-testid="stock-pagination">
         <a class="btn btn-sm btn-outline-secondary <?= $pageNum<=1?'disabled':'' ?>" href="index.php?<?= $qs ?>&p=<?= $pageNum-1 ?>" data-testid="stock-prev">&laquo; Sebelumnya</a>
         <span class="small text-muted">Halaman <?= $pageNum ?> / <?= $totalPages ?></span>
@@ -351,6 +365,22 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
 <script>
+(function () {
+  // Tombol unduh PDF/Excel/Word memakai nilai filter yang SEDANG terisi di form
+  // pencarian (termasuk bila belum menekan Cari), sehingga tak ada lagi dua
+  // set tanggal yang tidak saling terhubung.
+  var exp = document.querySelector('[data-testid="stock-export-form"]');
+  var flt = document.querySelector('[data-testid="stock-search-form"]');
+  if (exp && flt) {
+    exp.addEventListener('submit', function () {
+      ['jenis', 'dari', 'sampai', 'q'].forEach(function (n) {
+        var src = flt.querySelector('[name="' + n + '"]');
+        var dst = exp.querySelector('[name="' + n + '"]');
+        if (src && dst) dst.value = src.value;
+      });
+    });
+  }
+})();
 (function () {
   // Pencarian sparepart (autocomplete) untuk form Barang Masuk & Keluar.
   // Endpoint: ajax/lookup.php?action=search_parts&q=...

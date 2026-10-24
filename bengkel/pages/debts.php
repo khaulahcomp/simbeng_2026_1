@@ -6,6 +6,7 @@
 // Mendukung pencatatan, pembayaran bertahap (cicilan), dan status lunas.
 // ============================================================
 $db = db();
+require_once __DIR__ . '/../includes/invoice_debt.php';
 $action = $_POST['action'] ?? '';
 
 if ($action === 'add') {
@@ -45,6 +46,8 @@ if ($action === 'pay') {
         $status = $newDibayar >= (float)$row['jumlah'] ? 'lunas' : 'belum_lunas';
         $db->prepare("UPDATE debts SET dibayar=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?")
            ->execute([$newDibayar, $status, $id]);
+        // Piutang yang berasal dari faktur & sudah lunas -> status faktur ikut LUNAS.
+        mark_invoice_paid_if_debt_settled($db, $id);
         $db->commit();
         set_flash('success', 'Pembayaran dicatat: ' . rupiah($bayar) . ($status === 'lunas' ? ' — LUNAS.' : '.'));
         header('Location: index.php?page=debt_receipt&id=' . $payId); exit;
@@ -64,8 +67,8 @@ if ($action === 'delete') {
 
 $filter = $_GET['jenis'] ?? 'semua';
 $where = ''; $params = [];
-if ($filter === 'hutang' || $filter === 'piutang') { $where = "WHERE jenis=?"; $params = [$filter]; }
-$q = $db->prepare("SELECT * FROM debts $where ORDER BY (status='belum_lunas') DESC, COALESCE(jatuh_tempo, tgl) ASC, id DESC");
+if ($filter === 'hutang' || $filter === 'piutang') { $where = "WHERE debts.jenis=?"; $params = [$filter]; }
+$q = $db->prepare("SELECT debts.*, tr.no_nota AS faktur_no FROM debts LEFT JOIN transactions tr ON tr.id = debts.transaction_id $where ORDER BY (debts.status='belum_lunas') DESC, COALESCE(debts.jatuh_tempo, debts.tgl) ASC, debts.id DESC");
 $q->execute($params);
 $rows = $q->fetchAll(PDO::FETCH_ASSOC);
 
@@ -159,7 +162,7 @@ $today = date('Y-m-d');
             $waUrl = 'https://wa.me/'.$waNum.'?text='.rawurlencode($waTxt); ?>
           <tr data-testid="debt-row-<?= $r['id'] ?>">
             <td><span class="badge bg-<?= $r['jenis']==='piutang'?'success':'danger' ?>"><?= strtoupper($r['jenis']) ?></span></td>
-            <td><strong><?= esc($r['pihak']) ?></strong><?php if ($r['keterangan']): ?><div class="small text-muted"><?= esc($r['keterangan']) ?></div><?php endif; ?></td>
+            <td><strong><?= esc($r['pihak']) ?></strong><?php if (!empty($r['telepon'])): ?> <span class="small text-muted"><i class="bi bi-telephone"></i> <?= esc($r['telepon']) ?></span><?php endif; ?><?php if ($r['keterangan']): ?><div class="small text-muted"><?= esc($r['keterangan']) ?></div><?php endif; ?><?php if (!empty($r['transaction_id']) && !empty($r['faktur_no'])): ?><div class="small"><a href="index.php?page=receipt&amp;id=<?= (int)$r['transaction_id'] ?>" data-testid="debt-faktur-link-<?= (int)$r['id'] ?>"><i class="bi bi-receipt me-1"></i>Lihat faktur <?= esc($r['faktur_no']) ?></a></div><?php endif; ?></td>
             <td class="text-end"><?= rupiah($r['jumlah']) ?></td>
             <td class="text-end <?= $sisa>0?'fw-semibold':'' ?>"><?= rupiah($sisa) ?></td>
             <td class="small"><?= $r['jatuh_tempo'] ? esc(date('d/m/Y', strtotime($r['jatuh_tempo']))) : '-' ?>

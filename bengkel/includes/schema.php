@@ -310,6 +310,25 @@ function run_full_migration(): void {
         $db->exec("ALTER TABLE debts ADD COLUMN telepon VARCHAR(40) NOT NULL DEFAULT '' AFTER pihak");
     }
 
+    // Piutang otomatis dari FAKTUR belum lunas: tautkan baris piutang ke faktur
+    // & pelanggan. 1 faktur = maksimal 1 piutang (unique); NULL = input manual.
+    if (!column_exists($db, 'debts', 'customer_id')) {
+        $db->exec("ALTER TABLE debts ADD COLUMN customer_id INT NULL AFTER telepon");
+    }
+    if (!column_exists($db, 'debts', 'transaction_id')) {
+        $db->exec("ALTER TABLE debts ADD COLUMN transaction_id INT NULL AFTER customer_id");
+    }
+    try {
+        $ux = $db->prepare("SELECT COUNT(*) FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'debts' AND INDEX_NAME = 'uniq_debts_transaction'");
+        $ux->execute();
+        if ((int)$ux->fetchColumn() === 0) {
+            $db->exec("ALTER TABLE debts ADD UNIQUE INDEX uniq_debts_transaction (transaction_id)");
+        }
+    } catch (\Throwable $e) {
+        if (function_exists('app_log')) app_log('error', 'unique debts.transaction_id gagal: ' . $e->getMessage());
+    }
+
     $db->exec("CREATE TABLE IF NOT EXISTS debt_payments (
         id INT AUTO_INCREMENT PRIMARY KEY,
         debt_id INT NOT NULL,
@@ -343,6 +362,26 @@ function run_full_migration(): void {
     add_index_if_missing($db, 'warranty_claims', 'idx_wc_status', 'status');
     add_index_if_missing($db, 'stock_movements', 'idx_sm_created_at', 'created_at');
     add_index_if_missing($db, 'debts', 'idx_debts_status_jt', 'status, jatuh_tempo');
+
+    // Backfill: faktur lama berstatus BELUM LUNAS yang belum punya piutang
+    // otomatis dimasukkan ke Hutang Piutang (idempotent: NOT EXISTS).
+    try {
+        $db->exec("INSERT INTO debts (jenis, pihak, telepon, customer_id, transaction_id, keterangan, jumlah, dibayar, status, tgl, jatuh_tempo)
+            SELECT 'piutang', c.nama, c.telepon, t.customer_id, t.id,
+                   CONCAT('Faktur ', t.no_nota,
+                          IF(v.plat_nomor IS NULL OR v.plat_nomor = '', '',
+                             CONCAT(' - ', TRIM(CONCAT(v.merek, ' ', v.model)), ' / ', v.plat_nomor))),
+                   t.grand_total, 0, 'belum_lunas',
+                   DATE_FORMAT(t.created_at + INTERVAL 7 HOUR, '%Y-%m-%d'),
+                   NULLIF(t.jatuh_tempo, '')
+            FROM transactions t
+            JOIN customers c ON c.id = t.customer_id
+            LEFT JOIN vehicles v ON v.id = t.vehicle_id
+            WHERE t.status_bayar = 'belum' AND t.grand_total > 0
+              AND NOT EXISTS (SELECT 1 FROM debts d WHERE d.transaction_id = t.id)");
+    } catch (\Throwable $e) {
+        if (function_exists('app_log')) app_log('error', 'backfill piutang faktur gagal: ' . $e->getMessage());
+    }
 
     // FULLTEXT untuk pencarian nama sparepart yang skalabel (MATCH..AGAINST,
     // termasuk kata di tengah nama) tanpa full table scan LIKE '%kata%'.
