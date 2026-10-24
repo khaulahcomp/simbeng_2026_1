@@ -185,6 +185,12 @@ if ($type === 'parts') {
     $jenis = $_GET['jenis'] ?? 'semua';
     $w = ''; $pr = [];
     if ($jenis === 'piutang' || $jenis === 'hutang') { $w = "WHERE jenis=?"; $pr = [$jenis]; }
+    $kwx = trim((string)($_GET['q'] ?? ''));
+    if ($kwx !== '') {
+        $w .= ($w === '' ? 'WHERE ' : ' AND ')
+            . "(pihak LIKE ? OR telepon LIKE ? OR keterangan LIKE ? OR transaction_id IN (SELECT id FROM transactions WHERE no_nota LIKE ?))";
+        array_push($pr, "%$kwx%", "%$kwx%", "%$kwx%", "%$kwx%");
+    }
     $st = db()->prepare("SELECT * FROM debts $w ORDER BY (status='belum_lunas') DESC, COALESCE(jatuh_tempo,tgl) ASC, id DESC");
     $st->execute($pr);
     $judul = 'Rekap Hutang & Piutang' . ($jenis !== 'semua' ? ' (' . ucfirst($jenis) . ')' : '');

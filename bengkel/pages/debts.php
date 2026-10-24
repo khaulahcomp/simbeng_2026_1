@@ -66,11 +66,31 @@ if ($action === 'delete') {
 }
 
 $filter = $_GET['jenis'] ?? 'semua';
-$where = ''; $params = [];
-if ($filter === 'hutang' || $filter === 'piutang') { $where = "WHERE debts.jenis=?"; $params = [$filter]; }
-$q = $db->prepare("SELECT debts.*, tr.no_nota AS faktur_no FROM debts LEFT JOIN transactions tr ON tr.id = debts.transaction_id $where ORDER BY (debts.status='belum_lunas') DESC, COALESCE(debts.jatuh_tempo, debts.tgl) ASC, debts.id DESC");
-$q->execute($params);
-$rows = $q->fetchAll(PDO::FETCH_ASSOC);
+if (!in_array($filter, ['semua', 'hutang', 'piutang'], true)) $filter = 'semua';
+// Pencarian: no. faktur / nama pihak (pelanggan) / no. HP / keterangan.
+$kw = trim((string)($_GET['q'] ?? ''));
+$allowedPer = [25, 50, 100];
+$per = (int)($_GET['per_page'] ?? 25);
+if (!in_array($per, $allowedPer, true)) $per = 25;
+$conds = []; $params = [];
+if ($filter === 'hutang' || $filter === 'piutang') { $conds[] = "debts.jenis=?"; $params[] = $filter; }
+if ($kw !== '') {
+    $conds[] = "(debts.pihak LIKE ? OR debts.telepon LIKE ? OR debts.keterangan LIKE ? OR tr.no_nota LIKE ?)";
+    array_push($params, "%$kw%", "%$kw%", "%$kw%", "%$kw%");
+}
+$where = $conds ? ('WHERE ' . implode(' AND ', $conds)) : '';
+$fromSql = "FROM debts LEFT JOIN transactions tr ON tr.id = debts.transaction_id $where";
+$stCnt = $db->prepare("SELECT COUNT(*) $fromSql");
+$stCnt->execute($params);
+$totalRows = (int)$stCnt->fetchColumn();
+$totalPages = max(1, (int)ceil($totalRows / $per));
+$pageNum = max(1, (int)($_GET['p'] ?? 1));
+if ($pageNum > $totalPages) $pageNum = $totalPages;
+$offset = ($pageNum - 1) * $per;
+$stList = $db->prepare("SELECT debts.*, tr.no_nota AS faktur_no $fromSql ORDER BY (debts.status='belum_lunas') DESC, COALESCE(debts.jatuh_tempo, debts.tgl) ASC, debts.id DESC LIMIT $per OFFSET $offset");
+$stList->execute($params);
+$rows = $stList->fetchAll(PDO::FETCH_ASSOC);
+$baseQs = 'page=debts&jenis=' . urlencode($filter) . '&q=' . urlencode($kw) . '&per_page=' . $per;
 
 $sumPiutang = (float)$db->query("SELECT COALESCE(SUM(jumlah-dibayar),0) FROM debts WHERE jenis='piutang' AND status='belum_lunas'")->fetchColumn();
 $sumHutang  = (float)$db->query("SELECT COALESCE(SUM(jumlah-dibayar),0) FROM debts WHERE jenis='hutang' AND status='belum_lunas'")->fetchColumn();
@@ -136,17 +156,37 @@ $today = date('Y-m-d');
         <h2 class="h6 mb-0">Daftar Hutang & Piutang</h2>
         <div class="d-flex gap-2 flex-wrap align-items-center">
           <div class="btn-group btn-group-sm" role="group" data-testid="debt-filter">
-            <a href="index.php?page=debts&jenis=semua" class="btn btn-outline-secondary <?= $filter==='semua'?'active':'' ?>">Semua</a>
-            <a href="index.php?page=debts&jenis=piutang" class="btn btn-outline-success <?= $filter==='piutang'?'active':'' ?>">Piutang</a>
-            <a href="index.php?page=debts&jenis=hutang" class="btn btn-outline-danger <?= $filter==='hutang'?'active':'' ?>">Hutang</a>
+            <a href="index.php?page=debts&jenis=semua&q=<?= urlencode($kw) ?>&per_page=<?= $per ?>" class="btn btn-outline-secondary <?= $filter==='semua'?'active':'' ?>">Semua</a>
+            <a href="index.php?page=debts&jenis=piutang&q=<?= urlencode($kw) ?>&per_page=<?= $per ?>" class="btn btn-outline-success <?= $filter==='piutang'?'active':'' ?>">Piutang</a>
+            <a href="index.php?page=debts&jenis=hutang&q=<?= urlencode($kw) ?>&per_page=<?= $per ?>" class="btn btn-outline-danger <?= $filter==='hutang'?'active':'' ?>">Hutang</a>
           </div>
           <div class="btn-group btn-group-sm" role="group" data-testid="debt-export">
-            <a href="export.php?type=debts&jenis=<?= esc($filter) ?>&format=pdf" target="_blank" class="btn btn-outline-danger" title="Unduh PDF" data-testid="debt-export-pdf"><i class="bi bi-file-earmark-pdf"></i></a>
-            <a href="export.php?type=debts&jenis=<?= esc($filter) ?>&format=xls" target="_blank" class="btn btn-outline-success" title="Unduh Excel" data-testid="debt-export-xls"><i class="bi bi-file-earmark-excel"></i></a>
-            <a href="export.php?type=debts&jenis=<?= esc($filter) ?>&format=doc" target="_blank" class="btn btn-outline-primary" title="Unduh Word" data-testid="debt-export-doc"><i class="bi bi-file-earmark-word"></i></a>
+            <a href="export.php?type=debts&jenis=<?= esc($filter) ?>&q=<?= urlencode($kw) ?>&format=pdf" target="_blank" class="btn btn-outline-danger" title="Unduh PDF" data-testid="debt-export-pdf"><i class="bi bi-file-earmark-pdf"></i></a>
+            <a href="export.php?type=debts&jenis=<?= esc($filter) ?>&q=<?= urlencode($kw) ?>&format=xls" target="_blank" class="btn btn-outline-success" title="Unduh Excel" data-testid="debt-export-xls"><i class="bi bi-file-earmark-excel"></i></a>
+            <a href="export.php?type=debts&jenis=<?= esc($filter) ?>&q=<?= urlencode($kw) ?>&format=doc" target="_blank" class="btn btn-outline-primary" title="Unduh Word" data-testid="debt-export-doc"><i class="bi bi-file-earmark-word"></i></a>
           </div>
         </div>
       </div>
+      <form method="get" class="row g-2 align-items-center mb-2" data-testid="debt-search-form">
+        <input type="hidden" name="page" value="debts">
+        <input type="hidden" name="jenis" value="<?= esc($filter) ?>">
+        <div class="col-12 col-md">
+          <div class="input-group input-group-sm">
+            <input type="search" name="q" value="<?= esc($kw) ?>" class="form-control" placeholder="Cari no. faktur / nama pelanggan / no. HP..." aria-label="Cari piutang" data-testid="debt-search-q">
+            <button class="btn btn-primary" title="Cari" data-testid="debt-search-btn"><i class="bi bi-search"></i></button>
+            <?php if ($kw !== ''): ?><a href="index.php?page=debts&amp;jenis=<?= esc($filter) ?>&amp;per_page=<?= $per ?>" class="btn btn-outline-secondary" title="Hapus pencarian" data-testid="debt-search-reset"><i class="bi bi-x-lg"></i></a><?php endif; ?>
+          </div>
+        </div>
+        <div class="col-12 col-md-auto">
+          <div class="input-group input-group-sm">
+            <span class="input-group-text">Tampil</span>
+            <select name="per_page" class="form-select" onchange="this.form.submit()" data-testid="debt-perpage">
+              <?php foreach ($allowedPer as $pp): ?><option value="<?= $pp ?>" <?= $per===$pp?'selected':'' ?>><?= $pp ?> data</option><?php endforeach; ?>
+            </select>
+          </div>
+        </div>
+      </form>
+      <div class="small text-muted mb-2" data-testid="debt-count">Menampilkan <?= count($rows) ?> dari <?= $totalRows ?> data<?= $kw !== '' ? ' (cari: &quot;' . esc($kw) . '&quot;)' : '' ?>.</div>
       <div class="table-responsive">
       <table class="table table-sm align-middle" data-testid="debt-table">
         <thead><tr><th>Jenis</th><th>Pihak / Keterangan</th><th class="text-end">Jumlah</th><th class="text-end">Sisa</th><th>Jatuh Tempo</th><th>Status</th><th></th></tr></thead>
@@ -187,6 +227,13 @@ $today = date('Y-m-d');
         </tbody>
       </table>
       </div>
+      <?php if ($totalPages > 1): ?>
+      <nav class="d-flex justify-content-between align-items-center mt-2" data-testid="debt-pagination">
+        <a class="btn btn-sm btn-outline-secondary <?= $pageNum<=1?'disabled':'' ?>" href="index.php?<?= $baseQs ?>&p=<?= $pageNum-1 ?>" data-testid="debt-prev">&laquo; Sebelumnya</a>
+        <span class="small text-muted">Halaman <?= $pageNum ?> / <?= $totalPages ?></span>
+        <a class="btn btn-sm btn-outline-secondary <?= $pageNum>=$totalPages?'disabled':'' ?>" href="index.php?<?= $baseQs ?>&p=<?= $pageNum+1 ?>" data-testid="debt-next">Berikutnya &raquo;</a>
+      </nav>
+      <?php endif; ?>
     </div></div>
   </div>
 </div>
