@@ -188,8 +188,8 @@ if ($type === 'parts') {
     $kwx = trim((string)($_GET['q'] ?? ''));
     if ($kwx !== '') {
         $w .= ($w === '' ? 'WHERE ' : ' AND ')
-            . "(pihak LIKE ? OR telepon LIKE ? OR keterangan LIKE ? OR transaction_id IN (SELECT id FROM transactions WHERE no_nota LIKE ?))";
-        array_push($pr, "%$kwx%", "%$kwx%", "%$kwx%", "%$kwx%");
+            . "(pihak LIKE ? OR telepon LIKE ? OR keterangan LIKE ? OR transaction_id IN (SELECT id FROM transactions WHERE no_nota LIKE ?) OR purchase_id IN (SELECT id FROM supplier_invoices WHERE no_faktur LIKE ? OR no_faktur_supplier LIKE ?))";
+        array_push($pr, "%$kwx%", "%$kwx%", "%$kwx%", "%$kwx%", "%$kwx%", "%$kwx%");
     }
     $st = db()->prepare("SELECT * FROM debts $w ORDER BY (status='belum_lunas') DESC, COALESCE(jatuh_tempo,tgl) ASC, id DESC");
     $st->execute($pr);

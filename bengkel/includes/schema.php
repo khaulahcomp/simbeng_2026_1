@@ -310,6 +310,54 @@ function run_full_migration(): void {
         $db->exec("ALTER TABLE debts ADD COLUMN telepon VARCHAR(40) NOT NULL DEFAULT '' AFTER pihak");
     }
 
+    // Faktur tagihan dari SUPPLIER (barang masuk). 1 faktur = banyak item;
+    // bila BELUM LUNAS otomatis tercatat sebagai HUTANG di menu Hutang Piutang.
+    $db->exec("CREATE TABLE IF NOT EXISTS supplier_invoices (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        no_faktur VARCHAR(100) NOT NULL,
+        no_faktur_supplier VARCHAR(100) NOT NULL DEFAULT '',
+        supplier_id INT NOT NULL,
+        tgl VARCHAR(20) NOT NULL DEFAULT '',
+        jatuh_tempo VARCHAR(20) NULL,
+        total DECIMAL(14,2) NOT NULL DEFAULT 0,
+        status_bayar VARCHAR(20) NOT NULL DEFAULT 'belum',
+        catatan VARCHAR(500) NOT NULL DEFAULT '',
+        user_nama VARCHAR(150) NOT NULL DEFAULT '',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_si_no (no_faktur),
+        INDEX idx_si_supplier (supplier_id, tgl),
+        CONSTRAINT fk_si_supplier FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+    ) $eng");
+    $db->exec("CREATE TABLE IF NOT EXISTS supplier_invoice_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        invoice_id INT NOT NULL,
+        part_id INT NULL,
+        kode VARCHAR(100) NOT NULL DEFAULT '',
+        nama VARCHAR(200) NOT NULL DEFAULT '',
+        qty INT NOT NULL DEFAULT 1,
+        harga_beli DECIMAL(14,2) NOT NULL DEFAULT 0,
+        subtotal DECIMAL(14,2) NOT NULL DEFAULT 0,
+        rak VARCHAR(100) NOT NULL DEFAULT '',
+        INDEX idx_sii_invoice (invoice_id),
+        CONSTRAINT fk_sii_invoice FOREIGN KEY (invoice_id) REFERENCES supplier_invoices(id) ON DELETE CASCADE
+    ) $eng");
+    if (!column_exists($db, 'debts', 'supplier_id')) {
+        $db->exec("ALTER TABLE debts ADD COLUMN supplier_id INT NULL AFTER transaction_id");
+    }
+    if (!column_exists($db, 'debts', 'purchase_id')) {
+        $db->exec("ALTER TABLE debts ADD COLUMN purchase_id INT NULL AFTER supplier_id");
+    }
+    try {
+        $ux2 = $db->prepare("SELECT COUNT(*) FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'debts' AND INDEX_NAME = 'uniq_debts_purchase'");
+        $ux2->execute();
+        if ((int)$ux2->fetchColumn() === 0) {
+            $db->exec("ALTER TABLE debts ADD UNIQUE INDEX uniq_debts_purchase (purchase_id)");
+        }
+    } catch (\Throwable $e) {
+        if (function_exists('app_log')) app_log('error', 'unique debts.purchase_id gagal: ' . $e->getMessage());
+    }
+
     // Piutang otomatis dari FAKTUR belum lunas: tautkan baris piutang ke faktur
     // & pelanggan. 1 faktur = maksimal 1 piutang (unique); NULL = input manual.
     if (!column_exists($db, 'debts', 'customer_id')) {

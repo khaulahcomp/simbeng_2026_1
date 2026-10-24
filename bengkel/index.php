@@ -37,7 +37,7 @@ $routes = [
     'parts'          => 'Inventory Sparepart',
     'parts_bulk'     => 'Lengkapi Harga & Stok Sparepart',
     'categories'     => 'Kategori Sparepart',
-    'stock'          => 'Barang Masuk & Keluar',
+    'stock'          => 'Barang Masuk dari Supplier',
     'racks'          => 'Transfer Rak (Multi Rak)',
     'pos'            => 'Kasir / Transaksi Servis',
     'transactions'   => 'Riwayat Transaksi',
@@ -49,6 +49,7 @@ $routes = [
     'warranty'       => 'Klaim Garansi',
     'warranty_print' => 'Bukti Klaim Garansi',
     'debt_receipt'   => 'Kwitansi Pembayaran',
+    'purchase_receipt' => 'Faktur Tagihan Supplier',
     'users'          => 'Manajemen Pengguna',
     'settings'       => 'Pengaturan',
     'notes'          => 'Catatan',
@@ -56,7 +57,7 @@ $routes = [
 if (!isset($routes[$page])) $page = 'dashboard';
 
 // Halaman cetak tampil tanpa sidebar (bare)
-$bare = in_array($page, ['receipt', 'warranty_print', 'debt_receipt'], true);
+$bare = in_array($page, ['receipt', 'warranty_print', 'debt_receipt', 'purchase_receipt'], true);
 
 $title = $routes[$page];
 if (!$bare) require __DIR__ . '/includes/header.php';

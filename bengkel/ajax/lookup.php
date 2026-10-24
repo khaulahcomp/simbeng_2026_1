@@ -30,7 +30,7 @@ if ($action === 'search_parts') {
     if ($q === '' || mb_strlen($q) < 1) { echo json_encode([]); exit; }
     $prefix = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q) . '%';
 
-    $cols = "id, kode, barcode, nama, kategori, stok, harga_jual, multi_rak_aktif,
+    $cols = "id, kode, barcode, nama, kategori, stok, harga_jual, harga_beli, multi_rak_aktif,
         IF(multi_rak_aktif=1, (SELECT COALESCE(pr.stok,0) FROM part_racks pr WHERE pr.part_id=parts.id AND pr.is_utama=1 LIMIT 1), stok) AS rak_utama_stok";
     $results = []; $seen = [];
     $push = function ($rows) use (&$results, &$seen) {

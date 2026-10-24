@@ -7,6 +7,7 @@
 // ============================================================
 $db = db();
 require_once __DIR__ . '/../includes/invoice_debt.php';
+require_once __DIR__ . '/../includes/purchase.php';
 $action = $_POST['action'] ?? '';
 
 if ($action === 'add') {
@@ -48,6 +49,7 @@ if ($action === 'pay') {
            ->execute([$newDibayar, $status, $id]);
         // Piutang yang berasal dari faktur & sudah lunas -> status faktur ikut LUNAS.
         mark_invoice_paid_if_debt_settled($db, $id);
+        mark_purchase_paid_if_debt_settled($db, $id); // hutang faktur supplier lunas -> faktur LUNAS
         $db->commit();
         set_flash('success', 'Pembayaran dicatat: ' . rupiah($bayar) . ($status === 'lunas' ? ' — LUNAS.' : '.'));
         header('Location: index.php?page=debt_receipt&id=' . $payId); exit;
@@ -75,11 +77,11 @@ if (!in_array($per, $allowedPer, true)) $per = 25;
 $conds = []; $params = [];
 if ($filter === 'hutang' || $filter === 'piutang') { $conds[] = "debts.jenis=?"; $params[] = $filter; }
 if ($kw !== '') {
-    $conds[] = "(debts.pihak LIKE ? OR debts.telepon LIKE ? OR debts.keterangan LIKE ? OR tr.no_nota LIKE ?)";
-    array_push($params, "%$kw%", "%$kw%", "%$kw%", "%$kw%");
+    $conds[] = "(debts.pihak LIKE ? OR debts.telepon LIKE ? OR debts.keterangan LIKE ? OR tr.no_nota LIKE ? OR si.no_faktur LIKE ? OR si.no_faktur_supplier LIKE ?)";
+    array_push($params, "%$kw%", "%$kw%", "%$kw%", "%$kw%", "%$kw%", "%$kw%");
 }
 $where = $conds ? ('WHERE ' . implode(' AND ', $conds)) : '';
-$fromSql = "FROM debts LEFT JOIN transactions tr ON tr.id = debts.transaction_id $where";
+$fromSql = "FROM debts LEFT JOIN transactions tr ON tr.id = debts.transaction_id LEFT JOIN supplier_invoices si ON si.id = debts.purchase_id $where";
 $stCnt = $db->prepare("SELECT COUNT(*) $fromSql");
 $stCnt->execute($params);
 $totalRows = (int)$stCnt->fetchColumn();
@@ -87,7 +89,7 @@ $totalPages = max(1, (int)ceil($totalRows / $per));
 $pageNum = max(1, (int)($_GET['p'] ?? 1));
 if ($pageNum > $totalPages) $pageNum = $totalPages;
 $offset = ($pageNum - 1) * $per;
-$stList = $db->prepare("SELECT debts.*, tr.no_nota AS faktur_no $fromSql ORDER BY (debts.status='belum_lunas') DESC, COALESCE(debts.jatuh_tempo, debts.tgl) ASC, debts.id DESC LIMIT $per OFFSET $offset");
+$stList = $db->prepare("SELECT debts.*, tr.no_nota AS faktur_no, si.no_faktur AS pbl_no $fromSql ORDER BY (debts.status='belum_lunas') DESC, COALESCE(debts.jatuh_tempo, debts.tgl) ASC, debts.id DESC LIMIT $per OFFSET $offset");
 $stList->execute($params);
 $rows = $stList->fetchAll(PDO::FETCH_ASSOC);
 $baseQs = 'page=debts&jenis=' . urlencode($filter) . '&q=' . urlencode($kw) . '&per_page=' . $per;
@@ -202,7 +204,7 @@ $today = date('Y-m-d');
             $waUrl = 'https://wa.me/'.$waNum.'?text='.rawurlencode($waTxt); ?>
           <tr data-testid="debt-row-<?= $r['id'] ?>">
             <td><span class="badge bg-<?= $r['jenis']==='piutang'?'success':'danger' ?>"><?= strtoupper($r['jenis']) ?></span></td>
-            <td><strong><?= esc($r['pihak']) ?></strong><?php if (!empty($r['telepon'])): ?> <span class="small text-muted"><i class="bi bi-telephone"></i> <?= esc($r['telepon']) ?></span><?php endif; ?><?php if ($r['keterangan']): ?><div class="small text-muted"><?= esc($r['keterangan']) ?></div><?php endif; ?><?php if (!empty($r['transaction_id']) && !empty($r['faktur_no'])): ?><div class="small"><a href="index.php?page=receipt&amp;id=<?= (int)$r['transaction_id'] ?>" data-testid="debt-faktur-link-<?= (int)$r['id'] ?>"><i class="bi bi-receipt me-1"></i>Lihat faktur <?= esc($r['faktur_no']) ?></a></div><?php endif; ?></td>
+            <td><strong><?= esc($r['pihak']) ?></strong><?php if (!empty($r['telepon'])): ?> <span class="small text-muted"><i class="bi bi-telephone"></i> <?= esc($r['telepon']) ?></span><?php endif; ?><?php if ($r['keterangan']): ?><div class="small text-muted"><?= esc($r['keterangan']) ?></div><?php endif; ?><?php if (!empty($r['transaction_id']) && !empty($r['faktur_no'])): ?><div class="small"><a href="index.php?page=receipt&amp;id=<?= (int)$r['transaction_id'] ?>" data-testid="debt-faktur-link-<?= (int)$r['id'] ?>"><i class="bi bi-receipt me-1"></i>Lihat faktur <?= esc($r['faktur_no']) ?></a></div><?php endif; ?><?php if (!empty($r['purchase_id']) && !empty($r['pbl_no'])): ?><div class="small"><a href="index.php?page=purchase_receipt&amp;id=<?= (int)$r['purchase_id'] ?>" data-testid="debt-pbl-link-<?= (int)$r['id'] ?>"><i class="bi bi-truck me-1"></i>Lihat faktur supplier <?= esc($r['pbl_no']) ?></a></div><?php endif; ?></td>
             <td class="text-end"><?= rupiah($r['jumlah']) ?></td>
             <td class="text-end <?= $sisa>0?'fw-semibold':'' ?>"><?= rupiah($sisa) ?></td>
             <td class="small"><?= $r['jatuh_tempo'] ? esc(date('d/m/Y', strtotime($r['jatuh_tempo']))) : '-' ?>
