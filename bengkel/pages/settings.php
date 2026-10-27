@@ -213,7 +213,7 @@ $h2 = (int)setting('theme_h2', '232');
         <li class="list-group-item d-flex align-items-center justify-content-between py-2" data-testid="menu-order-item-<?= $m[0] ?>">
           <span class="d-flex align-items-center">
             <span class="badge bg-light text-muted me-2" style="width:26px"><?= $i + 1 ?></span>
-            <i class="bi <?= esc($m[2]) ?> me-2"></i>
+            <?= ui_nav_icon($m[0], $m[2], 'me-2') ?>
             <span class="fw-semibold"><?= esc($m[3]) ?></span>
             <?php if ($m[4]): ?><span class="badge bg-secondary ms-2">Admin</span><?php endif; ?>
           </span>

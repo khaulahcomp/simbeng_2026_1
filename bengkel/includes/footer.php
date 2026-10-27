@@ -21,5 +21,6 @@
   document.addEventListener('submit', function (e) { inject(e.target); }, true);
 })();
 </script>
+<script src="<?= ui_asset('assets/simbeng-ui.js') ?>"></script>
 </body>
 </html>

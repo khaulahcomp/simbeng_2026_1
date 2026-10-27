@@ -1,4 +1,5 @@
-<?php $user = current_user(); $flash = get_flash();
+<?php require_once __DIR__ . '/ui.php'; // ikon menu otomotif (tampilan saja)
+$user = current_user(); $flash = get_flash();
 // Tema gradasi dari pengaturan (warna dasar aplikasi)
 $th1 = (int)setting('theme_h1', '210');
 $th2 = (int)setting('theme_h2', '232');
@@ -19,6 +20,7 @@ $nav_items = bengkel_nav_items_ordered();
 <title><?= esc($title ?? $app_name) ?> - <?= esc($app_name) ?></title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" rel="stylesheet">
 <style>
   html, body { overflow-x: hidden; }
   body { background: #f4f6f9; }
@@ -69,22 +71,23 @@ $nav_items = bengkel_nav_items_ordered();
     .mobile-topbar { display: flex; }
   }
 </style>
+<link href="<?= ui_asset('assets/simbeng-ui.css') ?>" rel="stylesheet">
 </head>
 <body class="menu-<?= $menu_position ?>">
 <?php if ($menu_position === 'top'): ?>
 <nav class="topnav navbar navbar-expand-lg py-2" data-testid="topnav">
   <div class="container-fluid px-3">
     <a class="navbar-brand fw-bold d-flex align-items-center" href="index.php">
-      <?php if ($has_logo): ?><img src="<?= esc($logo) ?>" alt="Logo" class="me-2 rounded bg-white p-1" style="height:32px;width:32px;object-fit:contain" data-testid="topnav-logo"><?php else: ?><i class="bi bi-gear-wide-connected me-2"></i><?php endif; ?>
+      <?php if ($has_logo): ?><img src="<?= esc($logo) ?>" alt="Logo" class="me-2 rounded bg-white p-1" style="height:32px;width:32px;object-fit:contain" data-testid="topnav-logo"><?php else: ?><i class="fa-solid fa-gear brand-gear me-2"></i><?php endif; ?>
       <?= esc($app_name) ?>
     </a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#topNavMenu" data-testid="topnav-toggler"><span class="navbar-toggler-icon"></span></button>
     <div class="collapse navbar-collapse" id="topNavMenu">
       <ul class="navbar-nav ms-auto flex-wrap align-items-lg-center">
         <?php foreach ($nav_items as $it): if ($it[4] && !$is_admin) continue; ?>
-        <li class="nav-item"><a class="nav-link <?= $page===$it[0]?'active':'' ?>" href="<?= $it[1] ?>" data-testid="nav-<?= $it[0] ?>"><i class="bi <?= $it[2] ?> me-1"></i><?= $it[3] ?></a></li>
+        <li class="nav-item"><a class="nav-link <?= $page===$it[0]?'active':'' ?>" href="<?= $it[1] ?>" data-testid="nav-<?= $it[0] ?>"><?= ui_nav_icon($it[0], $it[2]) ?><?= $it[3] ?></a></li>
         <?php endforeach; ?>
-        <li class="nav-item"><a class="nav-link" href="index.php?page=logout" data-testid="nav-logout"><i class="bi bi-box-arrow-right me-1"></i>Keluar</a></li>
+        <li class="nav-item"><a class="nav-link" href="index.php?page=logout" data-testid="nav-logout"><?= ui_nav_icon('logout', 'bi-box-arrow-right') ?>Keluar</a></li>
       </ul>
     </div>
   </div>
@@ -97,19 +100,19 @@ $nav_items = bengkel_nav_items_ordered();
 <div class="row <?= $menu_position==='right' ? 'flex-row-reverse' : '' ?>">
   <nav class="col-lg-2 col-md-3 sidebar py-3 px-0" data-testid="sidebar">
     <div class="px-3 mb-3 d-flex justify-content-between align-items-center">
-      <span class="text-white fw-bold fs-5 d-flex align-items-center">
+      <span class="text-white fw-bold fs-5 d-flex align-items-center sb-brand">
         <?php if ($has_logo): ?>
         <img src="<?= esc($logo) ?>" alt="Logo" class="me-2 rounded bg-white p-1" style="height:34px;width:34px;object-fit:contain" data-testid="sidebar-logo">
-        <?php else: ?><i class="bi bi-gear-wide-connected me-2"></i><?php endif; ?>
+        <?php else: ?><i class="fa-solid fa-gear brand-gear me-2"></i><?php endif; ?>
         <?= esc($app_name) ?>
       </span>
       <button type="button" id="btnSidebarClose" class="btn btn-sm text-white d-md-none" data-testid="sidebar-close" aria-label="Tutup menu"><i class="bi bi-x-lg"></i></button>
     </div>
     <ul class="nav flex-column">
       <?php foreach ($nav_items as $it): if ($it[4] && !$is_admin) continue; ?>
-      <li><a class="nav-link <?= $page===$it[0]?'active':'' ?>" href="<?= $it[1] ?>" data-testid="nav-<?= $it[0] ?>"><i class="bi <?= $it[2] ?> me-2"></i><?= $it[3] ?></a></li>
+      <li><a class="nav-link <?= $page===$it[0]?'active':'' ?>" href="<?= $it[1] ?>" data-testid="nav-<?= $it[0] ?>"><?= ui_nav_icon($it[0], $it[2]) ?><?= $it[3] ?></a></li>
       <?php endforeach; ?>
-      <li><a class="nav-link" href="index.php?page=logout" data-testid="nav-logout"><i class="bi bi-box-arrow-right me-2"></i>Keluar</a></li>
+      <li><a class="nav-link" href="index.php?page=logout" data-testid="nav-logout"><?= ui_nav_icon('logout', 'bi-box-arrow-right') ?>Keluar</a></li>
     </ul>
   </nav>
   <div class="sidebar-overlay" id="sidebarOverlay" data-testid="sidebar-overlay"></div>
@@ -139,8 +142,8 @@ $nav_items = bengkel_nav_items_ordered();
       <span class="ms-auto small text-muted text-nowrap"><i class="bi bi-person-circle me-1"></i><?= esc($user['nama'] ?? '') ?></span>
     </div>
     <?php endif; ?>
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h1 class="h4 mb-0" data-testid="page-title"><?= esc($title ?? '') ?></h1>
+    <div class="page-head d-flex justify-content-between align-items-center mb-4">
+      <h1 class="h4 mb-0" data-testid="page-title"><?php $pm_ = ui_icon_map()[$page] ?? null; if ($pm_): ?><span class="page-ic" aria-hidden="true"><i class="fa-solid <?= $pm_[0] ?>"></i></span><?php endif; ?><?= esc($title ?? '') ?></h1>
       <span class="text-muted d-none d-md-inline" data-testid="current-user"><i class="bi bi-person-circle me-1"></i><?= esc($user['nama'] ?? '') ?> (<?= esc($user['role'] ?? '') ?>)</span>
     </div>
     <?php if ($flash): ?>

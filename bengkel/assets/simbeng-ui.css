@@ -1,0 +1,149 @@
+/* ============================================================
+   Simbeng UI - nuansa otomotif (khusus tampilan, tanpa efek ke fungsi)
+   Dimuat SETELAH CSS bawaan header.php sehingga hanya menimpa gaya visual.
+   ============================================================ */
+:root {
+  --sb-accent: #ff7a1a;      /* oranye "lampu indikator" */
+  --sb-accent-2: #ff4e1f;
+  --sb-gold: #ffb02e;
+  --sb-ease: cubic-bezier(.2,.8,.2,1);
+}
+
+/* ---------- Navbar atas & sidebar: serat karbon + garis balap ---------- */
+.topnav, .sidebar { position: relative; }
+@media (max-width: 767.98px) { .sidebar { position: fixed; } }   /* jangan ubah off-canvas ponsel */
+.topnav::before, .sidebar::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+  background:
+    repeating-linear-gradient(45deg,  rgba(255,255,255,.035) 0 2px, transparent 2px 6px),
+    repeating-linear-gradient(-45deg, rgba(0,0,0,.10) 0 2px, transparent 2px 6px);
+}
+.topnav::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; pointer-events: none;
+  background: linear-gradient(90deg, var(--sb-accent) 0, var(--sb-gold) 18%, transparent 60%);
+}
+.topnav > .container-fluid, .sidebar > * { position: relative; z-index: 1; }
+.brand-gear { transition: transform .6s var(--sb-ease); color: var(--sb-gold); }
+.navbar-brand:hover .brand-gear, .sb-brand:hover .brand-gear { transform: rotate(180deg); }
+
+/* ---------- Tautan menu + ikon ---------- */
+.topnav .nav-link, .sidebar .nav-link {
+  display: inline-flex; align-items: center; gap: .45rem;
+  transition: background .2s, color .2s, transform .2s var(--sb-ease), box-shadow .2s;
+}
+.sidebar .nav-link { display: flex; }
+.topnav .nav-link:hover, .sidebar .nav-link:hover { transform: translateY(-1px); }
+.nav-ic {
+  --ic: #ffc47a;
+  display: inline-block; width: 1.2em; text-align: center; font-size: .95em;
+  color: var(--ic); transition: color .2s, filter .2s, transform .25s var(--sb-ease);
+}
+.nav-ic.g-ops   { --ic: #ffb45e; }
+.nav-ic.g-money { --ic: #7fe3a6; }
+.nav-ic.g-stock { --ic: #82c8ff; }
+.nav-ic.g-admin { --ic: #cdaeff; }
+.nav-ic.g-misc  { --ic: #ffd98a; }
+.nav-link:hover .nav-ic { color: #fff; filter: drop-shadow(0 0 6px rgba(255,150,40,.95)); }
+.topnav .nav-link.active, .sidebar .nav-link.active {
+  background: linear-gradient(135deg, var(--sb-accent), var(--sb-accent-2));
+  box-shadow: 0 4px 14px rgba(255,100,20,.38);
+}
+.nav-link.active .nav-ic { color: #fff; }
+
+/* Daftar urutan menu di Pengaturan (latar putih): warna ikon lebih gelap agar terbaca */
+.list-group .nav-ic.g-ops   { --ic: #e8590c; }
+.list-group .nav-ic.g-money { --ic: #2b9a5b; }
+.list-group .nav-ic.g-stock { --ic: #1c7ed6; }
+.list-group .nav-ic.g-admin { --ic: #7048e8; }
+.list-group .nav-ic.g-misc  { --ic: #d9a000; }
+
+/* Animasi ikon saat disorot (gerakan komponen otomotif) */
+@keyframes sb-spin   { to { transform: rotate(360deg); } }
+@keyframes sb-needle { 0%,100% { transform: rotate(-38deg); } 50% { transform: rotate(38deg); } }
+@keyframes sb-twist  { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-28deg) scale(1.12); } }
+@keyframes sb-rev    { 0%,100% { transform: translate(0,0); } 25% { transform: translate(-1px,1px); } 75% { transform: translate(1px,-1px); } }
+@keyframes sb-drive  { 0% { transform: translateX(-2px); } 100% { transform: translateX(4px); } }
+.nav-link:hover .ic-spin   { animation: sb-spin 1.1s linear infinite; }
+.nav-link:hover .ic-needle { animation: sb-needle .9s ease-in-out infinite; }
+.nav-link:hover .ic-twist  { animation: sb-twist .7s ease-in-out infinite; }
+.nav-link:hover .ic-rev    { animation: sb-rev .12s linear infinite; }
+.nav-link:hover .ic-drive  { animation: sb-drive .45s ease-in-out infinite alternate; }
+.nav-link:hover .ic-pop    { transform: scale(1.28); }
+
+/* ---------- Judul halaman: chip ikon + garis balap ---------- */
+.page-head { position: relative; padding-bottom: .75rem; }
+.page-head::after {
+  content: ""; position: absolute; left: 0; bottom: 0; width: 96px; height: 4px; border-radius: 4px;
+  background: repeating-linear-gradient(135deg, var(--sb-accent) 0 9px, #1b2430 9px 18px);
+}
+.page-ic {
+  display: inline-grid; place-items: center; width: 38px; height: 38px; margin-right: .65rem;
+  border-radius: 11px; color: #fff; font-size: 1rem; vertical-align: middle;
+  background: linear-gradient(135deg, var(--sb-accent), var(--sb-accent-2));
+  box-shadow: 0 6px 14px rgba(255,100,20,.32);
+}
+.page-head h1 { display: flex; align-items: center; }
+
+/* ---------- Kartu, tabel, tombol ---------- */
+@keyframes sb-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.stat-card, .table-card { animation: sb-rise .4s var(--sb-ease) backwards; }   /* backwards: hover tidak tertahan keyframe */
+.row > :nth-child(2) > .stat-card { animation-delay: .05s; }
+.row > :nth-child(3) > .stat-card { animation-delay: .10s; }
+.row > :nth-child(4) > .stat-card { animation-delay: .15s; }
+.row > :nth-child(5) > .stat-card { animation-delay: .20s; }
+.stat-card { position: relative; overflow: hidden; transition: transform .2s var(--sb-ease), box-shadow .2s; }
+.stat-card:hover { transform: translateY(-3px); box-shadow: 0 12px 26px rgba(0,0,0,.14); }
+.table-card { position: relative; }
+.table-card::before {
+  content: ""; position: absolute; left: 18px; top: 0; width: 58px; height: 3px; pointer-events: none;
+  border-radius: 0 0 4px 4px; background: linear-gradient(90deg, var(--sb-accent), var(--sb-gold));
+}
+.table-card .table > tbody > tr { transition: background .15s; }
+.table-card .table > tbody > tr:hover { --bs-table-bg-state: rgba(255,122,26,.08); }
+.btn { transition: transform .12s, box-shadow .2s, background-color .2s, border-color .2s, color .2s; }
+.btn:active:not(:disabled):not(.disabled) { transform: translateY(1px) scale(.98); }
+.btn:focus-visible, .form-control:focus, .form-select:focus { box-shadow: 0 0 0 .22rem rgba(255,122,26,.28); border-color: #ff9a4d; }
+
+/* Ikon latar kartu statistik dashboard (otomotif) tanpa mengubah dashboard.php */
+.stat-card .card-body, .stat-card[data-testid] { position: relative; }
+.stat-card [data-testid^="stat-"]::after,
+.stat-card[data-testid^="stat-"]::after {
+  font-family: "Font Awesome 6 Free"; font-weight: 900; position: absolute; right: 12px; bottom: 6px;
+  font-size: 2.6rem; line-height: 1; color: var(--sb-accent); opacity: .13; pointer-events: none;
+  transition: transform .5s var(--sb-ease), opacity .3s;
+}
+.stat-card:hover [data-testid^="stat-"]::after, .stat-card[data-testid^="stat-"]:hover::after { opacity: .26; transform: rotate(-12deg) scale(1.12); }
+.stat-card:hover [data-testid="stat-stok-menipis"]::after { transform: rotate(90deg) scale(1.12); }   /* roda gigi berputar */
+[data-testid="stat-pendapatan"]::after   { content: "\f51e"; }  /* koin */
+[data-testid="stat-servis"]::after       { content: "\f7d9"; }  /* kunci & obeng */
+[data-testid="stat-stok-menipis"]::after { content: "\f085"; }  /* roda gigi (sparepart) */
+[data-testid="stat-pelanggan"]::after    { content: "\f21c"; }  /* motor */
+[data-testid="stat-garansi"]::after      { content: "\f3ed"; }  /* perisai */
+.stat-card[data-testid="stat-saldo-kas"]::after { content: "\f555"; }
+.stat-card[data-testid="stat-laba-bln"]::after  { content: "\f201"; }
+
+/* ---------- Bilah progres balap (saat pindah halaman / simpan) ---------- */
+#sbProgress {
+  position: fixed; top: 0; left: 0; height: 3px; width: 0; z-index: 2000; pointer-events: none; opacity: 0;
+  background: linear-gradient(90deg, var(--sb-accent), var(--sb-gold), #fff3);
+  box-shadow: 0 0 10px rgba(255,140,40,.85);
+}
+#sbProgress.run  { opacity: 1; width: 82%; transition: width 7s cubic-bezier(.1,.6,.2,1); }
+#sbProgress.done { opacity: 0; width: 100%; transition: width .2s, opacity .4s .2s; }
+
+/* ---------- Tombol kembali ke atas ---------- */
+.sb-top {
+  position: fixed; right: 18px; bottom: 18px; z-index: 1030; width: 44px; height: 44px; border: 0; border-radius: 50%;
+  display: grid; place-items: center; color: #fff; cursor: pointer; font-size: 1.05rem;
+  background: linear-gradient(135deg, var(--sb-accent), var(--sb-accent-2)); box-shadow: 0 8px 20px rgba(255,100,20,.4);
+  opacity: 0; transform: translateY(16px) scale(.9); pointer-events: none; transition: opacity .25s, transform .25s var(--sb-ease);
+}
+.sb-top.show { opacity: 1; transform: none; pointer-events: auto; }
+.sb-top:hover { transform: translateY(-3px); }
+@media print { #sbProgress, .sb-top { display: none !important; } }
+
+/* ---------- Hormati preferensi "kurangi gerakan" ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .stat-card, .table-card { animation: none !important; }
+  .nav-link:hover .nav-ic, .btn, .stat-card, #sbProgress, .sb-top { animation: none !important; transition: none !important; }
+}
