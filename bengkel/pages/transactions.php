@@ -76,6 +76,14 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $total = array_sum(array_column($rows, 'grand_total'));
 $qs = http_build_query(['page' => 'transactions', 'q' => $q, 'dari' => $dari, 'sampai' => $sampai, 'per_page' => $per]);
 ?>
+<style>
+  /* Nota BELUM LUNAS: diberi stabilo merah muda; nota lunas tidak berubah. */
+  mark.nota-belum {
+    color: inherit; font-weight: 600; padding: 2px 7px; border-radius: 4px;
+    background: linear-gradient(100deg, rgba(255,70,110,.18) 0%, rgba(255,70,110,.5) 8%, rgba(255,70,110,.42) 92%, rgba(255,70,110,.2) 100%);
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+</style>
 <div class="card table-card"><div class="card-body">
   <form class="row g-2 mb-3" method="get">
     <input type="hidden" name="page" value="transactions">
@@ -91,6 +99,7 @@ $qs = http_build_query(['page' => 'transactions', 'q' => $q, 'dari' => $dari, 's
   </form>
   <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
     <span class="small text-muted" data-testid="trx-count">Menampilkan <?= count($rows) ?> dari <?= $total_count ?> transaksi<?= $q!==''?' (filter: "'.esc($q).'")':'' ?> &mdash; Total keseluruhan: <strong><?= rupiah($total_all) ?></strong></span>
+    <span class="small text-muted ms-2" data-testid="trx-legend"><mark class="nota-belum">TRX</mark> = belum lunas</span>
   </div>
   <div class="table-responsive">
   <table class="table table-sm align-middle" data-testid="transactions-table">
@@ -99,7 +108,7 @@ $qs = http_build_query(['page' => 'transactions', 'q' => $q, 'dari' => $dari, 's
     <?php if (!$rows): ?><tr><td colspan="8" class="text-center text-muted">Tidak ada transaksi ditemukan.</td></tr><?php endif; ?>
     <?php foreach ($rows as $r): ?>
       <tr>
-        <td><?= esc($r['no_nota']) ?></td>
+        <td><?php if (($r['status_bayar'] ?? 'lunas') === 'belum'): ?><mark class="nota-belum" title="Belum lunas" data-testid="nota-belum-<?= (int)$r['id'] ?>"><?= esc($r['no_nota']) ?></mark><?php else: ?><?= esc($r['no_nota']) ?><?php endif; ?></td>
         <td><?= esc($r['customer_nama']) ?></td>
         <td><?= esc($r['plat_nomor'] ?? '-') ?></td>
         <td class="text-end"><?= rupiah($r['total_jasa']) ?></td>
