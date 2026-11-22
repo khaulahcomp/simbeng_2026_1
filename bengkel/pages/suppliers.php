@@ -212,6 +212,7 @@ if (isset($_GET['edit'])) {
                 data-debt-id="<?= (int)$iv['debt_id'] ?>" data-faktur="<?= esc($iv['no_faktur']) ?>" data-sisa="<?= (float)$iv['sisa'] ?>" data-testid="sinv-pay-<?= (int)$iv['id'] ?>"><i class="bi bi-cash-stack"></i> Bayar</button>
               <?php endif; ?>
               <?php if ($is_admin_user): ?>
+              <a class="btn btn-sm btn-outline-warning py-0 px-1" href="index.php?page=stock&amp;edit_invoice=<?= (int)$iv['id'] ?>" title="Edit faktur (koreksi sparepart)" data-testid="sinv-edit-<?= (int)$iv['id'] ?>"><i class="bi bi-pencil-square"></i></a>
               <form method="post" class="d-inline" onsubmit="return confirm('Batalkan faktur <?= esc($iv['no_faktur']) ?>? Stok barang masuk akan dikembalikan dan catatan hutangnya dihapus.')">
                 <input type="hidden" name="action" value="delete_invoice"><input type="hidden" name="id" value="<?= (int)$iv['id'] ?>"><input type="hidden" name="supplier_id" value="<?= $sid ?>">
                 <button class="btn btn-sm btn-outline-danger py-0 px-1" title="Batalkan faktur" data-testid="sinv-delete-<?= (int)$iv['id'] ?>"><i class="bi bi-trash"></i></button>
