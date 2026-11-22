@@ -65,6 +65,7 @@ if ($action === 'save_masuk') {
         }
         sync_purchase_debt($db, $inv_id); // BELUM LUNAS -> otomatis jadi hutang
         $db->commit();
+        purchase_mark_draft_done();
         set_flash('success', "Faktur $no_faktur tersimpan. Stok " . count($lines) . " sparepart bertambah"
             . ($status === 'belum' ? ' dan tagihan tercatat di Hutang Piutang.' : '.'));
         header('Location: index.php?page=purchase_receipt&id=' . $inv_id); exit;
@@ -75,7 +76,58 @@ if ($action === 'save_masuk') {
     header('Location: index.php?page=stock'); exit;
 }
 
+// ---- EDIT faktur supplier yang sudah jadi (khusus admin): kembali ke form input untuk koreksi ----
+if ($action === 'update_masuk') {
+    require_admin();
+    $eid = (int)($_POST['invoice_id'] ?? 0);
+    $back = 'index.php?page=stock&edit_invoice=' . $eid;
+    $supplier_id = (int)($_POST['supplier_id'] ?? 0);
+    $sp = $db->prepare("SELECT id FROM suppliers WHERE id=?"); $sp->execute([$supplier_id]);
+    if (!$sp->fetchColumn()) { set_flash('danger', 'Pilih supplier terlebih dahulu.'); header('Location: ' . $back); exit; }
+    $head = [
+        'supplier_id' => $supplier_id,
+        'no_sup'  => mb_substr(trim($_POST['no_faktur_supplier'] ?? ''), 0, 100),
+        'tgl'     => _valid_date($_POST['tgl'] ?? '') ? $_POST['tgl'] : date('Y-m-d'),
+        'jt'      => _valid_date($_POST['jatuh_tempo'] ?? '') ? $_POST['jatuh_tempo'] : null,
+        'status'  => (($_POST['status_bayar'] ?? 'belum') === 'lunas') ? 'lunas' : 'belum',
+        'catatan' => mb_substr(trim($_POST['catatan'] ?? ''), 0, 500),
+        'upd_hb'  => !empty($_POST['update_harga_beli']),
+    ];
+    $pids = (array)($_POST['part_id'] ?? []); $qtys = (array)($_POST['qty'] ?? []);
+    $hargas = (array)($_POST['harga_beli'] ?? []); $raks = (array)($_POST['rak'] ?? []);
+    $pq = $db->prepare("SELECT id, kode, nama FROM parts WHERE id=?");
+    $lines = [];
+    foreach ($pids as $i => $pid) {
+        $pid = (int)$pid; $qty = (int)($qtys[$i] ?? 0); $hb = max(0, (float)($hargas[$i] ?? 0));
+        if ($pid <= 0 || $qty <= 0) continue;
+        $pq->execute([$pid]); $part = $pq->fetch(PDO::FETCH_ASSOC);
+        if (!$part) continue;
+        $lines[] = ['part' => $part, 'qty' => $qty, 'hb' => $hb, 'sub' => $qty * $hb, 'rak' => trim((string)($raks[$i] ?? ''))];
+    }
+    if (!$lines) { set_flash('danger', 'Tambahkan minimal satu sparepart dengan jumlah minimal 1.'); header('Location: ' . $back); exit; }
+    $err = update_purchase_invoice($db, $eid, $head, $lines);
+    if ($err) { set_flash('danger', $err); header('Location: ' . $back); exit; }
+    purchase_mark_draft_done();
+    set_flash('success', 'Faktur berhasil dikoreksi. Stok, riwayat stok, dan hutang sudah disesuaikan.');
+    header('Location: index.php?page=purchase_receipt&id=' . $eid); exit;
+}
+
 $suppliers = $db->query("SELECT id, nama FROM suppliers ORDER BY nama")->fetchAll(PDO::FETCH_ASSOC);
+
+// Mode edit faktur: muat faktur + item untuk mengisi form input.
+$editInv = null; $editItems = [];
+if (isset($_GET['edit_invoice'])) {
+    require_admin();
+    $ei = $db->prepare("SELECT * FROM supplier_invoices WHERE id=?");
+    $ei->execute([(int)$_GET['edit_invoice']]);
+    $editInv = $ei->fetch(PDO::FETCH_ASSOC) ?: null;
+    if (!$editInv) { set_flash('danger', 'Faktur tidak ditemukan.'); header('Location: index.php?page=suppliers#faktur'); exit; }
+    $eit = $db->prepare("SELECT i.part_id AS id, i.kode, i.nama, i.qty, i.harga_beli, i.rak, p.stok
+        FROM supplier_invoice_items i LEFT JOIN parts p ON p.id = i.part_id WHERE i.invoice_id=? ORDER BY i.id");
+    $eit->execute([$editInv['id']]);
+    $editItems = $eit->fetchAll(PDO::FETCH_ASSOC);
+}
+$draftUid = (int)(current_user()['id'] ?? 0);
 
 // Riwayat pergerakan stok: filter cari (kode/nama part) + jenis pergerakan + jumlah per halaman + pagination
 $q = trim($_GET['q'] ?? '');
@@ -159,33 +211,44 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
   <div class="col-12">
     <div class="card table-card"><div class="card-body">
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-        <h2 class="h6 mb-0 text-success"><i class="bi bi-box-arrow-in-down me-1"></i>Barang Masuk dari Supplier &mdash; Faktur Tagihan</h2>
+        <h2 class="h6 mb-0 <?= $editInv ? 'text-warning' : 'text-success' ?>"><i class="bi bi-box-arrow-in-down me-1"></i><?= $editInv ? 'Edit Faktur ' . esc($editInv['no_faktur']) : 'Barang Masuk dari Supplier &mdash; Faktur Tagihan' ?></h2>
         <a href="index.php?page=suppliers" class="small"><i class="bi bi-truck me-1"></i>Lihat faktur tagihan per supplier</a>
       </div>
       <?php if (!$suppliers): ?>
         <div class="alert alert-warning small mb-0">Belum ada supplier. <a href="index.php?page=suppliers">Tambah supplier</a> terlebih dahulu.</div>
       <?php else: ?>
-      <form method="post" id="purchaseForm" data-testid="purchase-form" autocomplete="off">
-        <input type="hidden" name="action" value="save_masuk">
+      <div id="purchaseDraftBanner"></div>
+      <?php if ($editInv): ?>
+      <div class="alert alert-warning small py-2" data-testid="purchase-edit-notice">
+        <i class="bi bi-pencil-square me-1"></i><strong>Mode edit faktur <?= esc($editInv['no_faktur']) ?>.</strong>
+        Ubah sparepart / jumlah / harga lalu simpan: stok, riwayat stok, dan hutang akan disesuaikan otomatis.
+        Koreksi ditolak bila stok menjadi minus (barang sudah terjual).
+        <a href="index.php?page=suppliers&amp;supplier_id=<?= (int)$editInv['supplier_id'] ?>#faktur" class="ms-1">Batal &amp; kembali</a>
+      </div>
+      <?php endif; ?>
+      <form method="post" id="purchaseForm" data-testid="purchase-form" autocomplete="off" data-draft-key="purchase_draft_v1_u<?= $draftUid ?><?= $editInv ? '_edit' . (int)$editInv['id'] : '' ?>">
+        <input type="hidden" name="action" value="<?= $editInv ? 'update_masuk' : 'save_masuk' ?>">
+        <?php if ($editInv): ?><input type="hidden" name="invoice_id" value="<?= (int)$editInv['id'] ?>"><?php endif; ?>
+        <input type="hidden" name="draft_token" id="purchaseDraftToken" value="">
         <div class="row g-2 mb-2">
           <div class="col-12 col-md-4">
             <label class="form-label small mb-1">Supplier <span class="text-danger">*</span></label>
             <select name="supplier_id" class="form-select form-select-sm" required data-testid="purchase-supplier">
               <option value="">- Pilih supplier -</option>
-              <?php foreach ($suppliers as $s_): ?><option value="<?= $s_['id'] ?>"><?= esc($s_['nama']) ?></option><?php endforeach; ?>
+              <?php foreach ($suppliers as $s_): ?><option value="<?= $s_['id'] ?>" <?= ($editInv && (int)$editInv['supplier_id'] === (int)$s_['id']) ? 'selected' : '' ?>><?= esc($s_['nama']) ?></option><?php endforeach; ?>
             </select>
           </div>
           <div class="col-12 col-md-3">
             <label class="form-label small mb-1">No. Faktur dari Supplier</label>
-            <input type="text" name="no_faktur_supplier" class="form-control form-control-sm" maxlength="100" placeholder="mis. INV-2026/0123" data-testid="purchase-no-supplier">
+            <input type="text" name="no_faktur_supplier" class="form-control form-control-sm" maxlength="100" placeholder="mis. INV-2026/0123" value="<?= esc($editInv['no_faktur_supplier'] ?? '') ?>" data-testid="purchase-no-supplier">
           </div>
           <div class="col-6 col-md-2">
             <label class="form-label small mb-1">Tanggal Faktur</label>
-            <input type="date" name="tgl" value="<?= date('Y-m-d') ?>" class="form-control form-control-sm" data-testid="purchase-tgl">
+            <input type="date" name="tgl" value="<?= esc($editInv && _valid_date($editInv['tgl']) ? $editInv['tgl'] : date('Y-m-d')) ?>" class="form-control form-control-sm" data-testid="purchase-tgl">
           </div>
           <div class="col-6 col-md-3">
             <label class="form-label small mb-1">Jatuh Tempo Bayar</label>
-            <input type="date" name="jatuh_tempo" class="form-control form-control-sm" data-testid="purchase-jt">
+            <input type="date" name="jatuh_tempo" value="<?= esc($editInv && !empty($editInv['jatuh_tempo']) && _valid_date($editInv['jatuh_tempo']) ? $editInv['jatuh_tempo'] : '') ?>" class="form-control form-control-sm" data-testid="purchase-jt">
           </div>
         </div>
 
@@ -211,14 +274,14 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
         <div class="row g-2 align-items-end">
           <div class="col-12 col-md-5">
             <label class="form-label small mb-1">Catatan</label>
-            <input type="text" name="catatan" class="form-control form-control-sm" maxlength="500" placeholder="Opsional" data-testid="purchase-catatan">
+            <input type="text" name="catatan" class="form-control form-control-sm" maxlength="500" placeholder="Opsional" value="<?= esc($editInv['catatan'] ?? '') ?>" data-testid="purchase-catatan">
           </div>
           <div class="col-12 col-md-3">
             <label class="form-label small mb-1 d-block">Status Pembayaran ke Supplier</label>
             <div class="btn-group btn-group-sm w-100" role="group">
-              <input type="radio" class="btn-check" name="status_bayar" id="sbBelum" value="belum" checked>
+              <input type="radio" class="btn-check" name="status_bayar" id="sbBelum" value="belum" <?= (!$editInv || $editInv['status_bayar'] !== 'lunas') ? 'checked' : '' ?>>
               <label class="btn btn-outline-danger" for="sbBelum" data-testid="purchase-status-belum">Belum Lunas</label>
-              <input type="radio" class="btn-check" name="status_bayar" id="sbLunas" value="lunas">
+              <input type="radio" class="btn-check" name="status_bayar" id="sbLunas" value="lunas" <?= ($editInv && $editInv['status_bayar'] === 'lunas') ? 'checked' : '' ?>>
               <label class="btn btn-outline-success" for="sbLunas" data-testid="purchase-status-lunas">Lunas</label>
             </div>
           </div>
@@ -231,7 +294,8 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
           <input class="form-check-input" type="checkbox" name="update_harga_beli" value="1" id="updHb" data-testid="purchase-upd-hb">
           <label class="form-check-label small" for="updHb">Perbarui harga beli di data sparepart sesuai faktur ini <span class="text-muted">(memengaruhi perhitungan laba)</span></label>
         </div>
-        <button class="btn btn-success w-100 mt-2" data-testid="purchase-submit"><i class="bi bi-receipt me-1"></i>Simpan &amp; Cetak Faktur Tagihan</button>
+        <button class="btn btn-success w-100 mt-2" data-testid="purchase-submit"><i class="bi bi-receipt me-1"></i><?= $editInv ? 'Simpan Koreksi Faktur' : 'Simpan &amp; Cetak Faktur Tagihan' ?></button>
+        <div class="form-text text-center" id="purchaseDraftStatus" data-testid="purchase-draft-status"></div>
         <div class="form-text">Status <strong>Belum Lunas</strong> otomatis dicatat sebagai hutang ke supplier di menu Hutang Piutang.</div>
       </form>
       <?php endif; ?>
@@ -392,7 +456,7 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
     listEl.classList.add('is-open');
   }
 
-  function loadRak(tr, partId) {
+  function loadRak(tr, partId, preset) {
     var cell = tr.querySelector('[data-role="rak-cell"]');
     fetch('ajax/rak.php?action=list&part_id=' + partId, { credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
@@ -403,30 +467,33 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
           return '<option value="' + esc(val) + '">' + esc(r.nama_rak) + (parseInt(r.is_utama, 10) === 1 ? ' (Utama)' : '') + ' · ' + r.stok + '</option>';
         }).join('') + '</select>';
         cell.innerHTML = sel;
+        if (preset) { var sl = cell.querySelector('select'); if (sl) { sl.value = preset; if (sl.value !== preset) sl.value = '__UTAMA__'; } }
       }).catch(function () {});
   }
 
-  function addPart(p) {
+  function addPart(p, opt) {
+    opt = opt || {};
     var existing = body.querySelector('tr[data-part="' + p.id + '"]');
     if (existing) {
       var q = existing.querySelector('[name="qty[]"]');
-      q.value = (parseInt(q.value, 10) || 0) + 1;
+      q.value = (parseInt(q.value, 10) || 0) + (parseInt(opt.qty, 10) || 1);
       recalc(); q.focus(); q.select(); return;
     }
     var tr = document.createElement('tr');
     tr.setAttribute('data-part', p.id);
+    tr.setAttribute('data-kode', p.kode || ''); tr.setAttribute('data-nama', p.nama || ''); tr.setAttribute('data-stok', p.stok == null ? '' : p.stok);
     tr.innerHTML =
       '<td><input type="hidden" name="part_id[]" value="' + p.id + '"><span class="part-search-item-kode kode" style="font-family:ui-monospace,monospace;font-size:.75rem;background:#eef2f7;padding:1px 6px;border-radius:4px">' + esc(p.kode) + '</span> ' + esc(p.nama) + '</td>' +
       '<td class="text-end text-muted small">' + p.stok + '</td>' +
-      '<td><input type="number" name="qty[]" min="1" step="1" value="1" class="form-control form-control-sm" data-testid="purchase-qty-' + p.id + '"></td>' +
-      '<td><input type="number" name="harga_beli[]" min="0" step="any" value="' + (p.harga_beli ? parseFloat(p.harga_beli) : 0) + '" class="form-control form-control-sm" data-testid="purchase-harga-' + p.id + '"></td>' +
+      '<td><input type="number" name="qty[]" min="1" step="1" value="' + (opt.qty || 1) + '" class="form-control form-control-sm" data-testid="purchase-qty-' + p.id + '"></td>' +
+      '<td><input type="number" name="harga_beli[]" min="0" step="any" value="' + (opt.harga != null ? opt.harga : (p.harga_beli ? parseFloat(p.harga_beli) : 0)) + '" class="form-control form-control-sm" data-testid="purchase-harga-' + p.id + '"></td>' +
       '<td class="text-end small" data-role="sub">Rp 0</td>' +
       '<td data-role="rak-cell"><input type="hidden" name="rak[]" value=""><span class="text-muted small">-</span></td>' +
       '<td><button type="button" class="btn-close" aria-label="Hapus baris" data-role="remove" data-testid="purchase-remove-' + p.id + '"></button></td>';
     body.appendChild(tr);
-    loadRak(tr, p.id);
+    loadRak(tr, p.id, opt.rak || '');
     recalc();
-    var q2 = tr.querySelector('[name="qty[]"]'); q2.focus(); q2.select();
+    if (!opt.silent) { var q2 = tr.querySelector('[name="qty[]"]'); q2.focus(); q2.select(); }
   }
 
   function pick(i) {
@@ -474,8 +541,102 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
     if (!rows.length) { e.preventDefault(); alert('Tambahkan minimal satu sparepart ke daftar.'); input.focus(); return; }
     var bad = false;
     rows.forEach(function (tr) { if (!(parseInt(tr.querySelector('[name="qty[]"]').value, 10) >= 1)) bad = true; });
-    if (bad) { e.preventDefault(); alert('Jumlah setiap sparepart minimal 1.'); }
+    if (bad) { e.preventDefault(); alert('Jumlah setiap sparepart minimal 1.'); return; }
+    // Batas aman server (PHP max_input_vars=1000 di hosting): >200 baris bisa terpotong diam-diam.
+    if (rows.length > MAX_ROWS) { e.preventDefault(); alert('Faktur berisi ' + rows.length + ' baris. Maksimal ' + MAX_ROWS + ' baris per faktur agar tidak terpotong server. Pecah menjadi 2 faktur (draf Anda tetap aman).'); return; }
+    // Tandai draf sebagai "sedang dikirim"; dihapus hanya bila server mengonfirmasi sukses.
+    markSubmitted();
   });
+
+  // ================= Draf otomatis (localStorage), meniru draf kasir =================
+  // Setiap perubahan tersimpan otomatis; bila server down / sesi habis / gagal simpan,
+  // inputan dapat dipulihkan. Draf hanya dihapus setelah server mengonfirmasi faktur tersimpan.
+  var MAX_ROWS = 200;
+  var DRAFT_KEY = form.getAttribute('data-draft-key') || 'purchase_draft_v1';
+  var IS_EDIT = form.querySelector('[name="action"]').value === 'update_masuk';
+  var statusEl = document.getElementById('purchaseDraftStatus');
+  var bannerEl = document.getElementById('purchaseDraftBanner');
+  function debounce(fn, ms) { var t; return function () { clearTimeout(t); t = setTimeout(fn, ms); }; }
+  function getCookie(n) { var m = document.cookie.match(new RegExp('(?:^|; )' + n + '=([^;]*)')); return m ? decodeURIComponent(m[1]) : ''; }
+  function fv(n) { var el = form.querySelector('[name="' + n + '"]'); return el ? el.value : ''; }
+  function serialize() {
+    var d = { ts: Date.now(), submitted: false, token: '',
+      supplier_id: fv('supplier_id'), no_sup: fv('no_faktur_supplier'), tgl: fv('tgl'), jt: fv('jatuh_tempo'), catatan: fv('catatan'),
+      status: (form.querySelector('[name="status_bayar"]:checked') || {}).value || 'belum',
+      upd_hb: !!form.querySelector('[name="update_harga_beli"]').checked, items: [] };
+    body.querySelectorAll('tr[data-part]').forEach(function (tr) {
+      d.items.push({ id: tr.getAttribute('data-part'), kode: tr.getAttribute('data-kode'), nama: tr.getAttribute('data-nama'), stok: tr.getAttribute('data-stok'),
+        qty: tr.querySelector('[name="qty[]"]').value, harga: tr.querySelector('[name="harga_beli[]"]').value,
+        rak: tr.querySelector('[name="rak[]"]').value });
+    });
+    return d;
+  }
+  function hasContent(d) { return d.items.length > 0 || d.no_sup.trim() !== '' || d.catatan.trim() !== ''; }
+  function saveDraft() {
+    var d = serialize();
+    try {
+      if (!hasContent(d)) { localStorage.removeItem(DRAFT_KEY); if (statusEl) statusEl.textContent = ''; return; }
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+      if (statusEl) statusEl.innerHTML = '<i class="bi bi-cloud-check me-1"></i>Draf tersimpan otomatis ' + new Date().toLocaleTimeString('id-ID') + ' (' + d.items.length + ' item)';
+    } catch (e) {}
+  }
+  function markSubmitted() {
+    var d = serialize(); d.submitted = true;
+    d.token = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    document.getElementById('purchaseDraftToken').value = d.token;
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (e) {}
+  }
+  function setField(n, v) { var el = form.querySelector('[name="' + n + '"]'); if (el && v != null) el.value = v; }
+  function restoreDraft(d) {
+    body.querySelectorAll('tr[data-part]').forEach(function (tr) { tr.remove(); });
+    setField('supplier_id', d.supplier_id); setField('no_faktur_supplier', d.no_sup); setField('tgl', d.tgl);
+    setField('jatuh_tempo', d.jt); setField('catatan', d.catatan);
+    var sb = form.querySelector('[name="status_bayar"][value="' + d.status + '"]'); if (sb) sb.checked = true;
+    form.querySelector('[name="update_harga_beli"]').checked = !!d.upd_hb;
+    (d.items || []).forEach(function (it) {
+      addPart({ id: it.id, kode: it.kode, nama: it.nama, stok: it.stok, harga_beli: 0 }, { qty: it.qty, harga: it.harga, rak: it.rak, silent: true });
+    });
+    recalc(); saveDraft();
+  }
+  function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+  function showBanner(d, unconfirmed) {
+    if (!bannerEl) return;
+    bannerEl.innerHTML = '<div class="alert alert-warning d-flex flex-wrap align-items-center gap-2 py-2" data-testid="purchase-draft-banner">' +
+      '<i class="bi bi-arrow-counterclockwise"></i><span>Ditemukan draf ' + (IS_EDIT ? 'koreksi faktur' : 'input barang masuk') + ' (' + (d.items || []).length + ' item, tersimpan ' + new Date(d.ts).toLocaleString('id-ID') + ').' +
+      (unconfirmed ? ' <strong>Penyimpanan terakhir belum terkonfirmasi server.</strong> Cek dulu di menu Supplier apakah fakturnya sudah tercatat, agar tidak dobel.' : '') + '</span>' +
+      '<button type="button" class="btn btn-sm btn-warning" data-testid="purchase-draft-restore"><i class="bi bi-arrow-counterclockwise me-1"></i>Pulihkan Draf</button>' +
+      '<button type="button" class="btn btn-sm btn-outline-danger" data-testid="purchase-draft-delete"><i class="bi bi-trash me-1"></i>Hapus Draf</button></div>';
+    bannerEl.querySelector('[data-testid="purchase-draft-restore"]').addEventListener('click', function () { restoreDraft(d); bannerEl.innerHTML = ''; });
+    bannerEl.querySelector('[data-testid="purchase-draft-delete"]').addEventListener('click', function () { clearDraft(); bannerEl.innerHTML = ''; if (statusEl) statusEl.textContent = ''; });
+  }
+  function initDraft() {
+    var d = null;
+    try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) {}
+    if (d && d.submitted) {
+      if (d.token && getCookie('pbl_done') === d.token) { clearDraft(); d = null; document.cookie = 'pbl_done=; Max-Age=0; path=/'; } // tersimpan sukses
+      else {
+        d.submitted = false; d.token = '';
+        try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (e) {}
+        // Gagal simpan (pesan galat tampil) -> pulihkan otomatis; tanpa respons server -> tanya dulu.
+        if (document.querySelector('.alert.alert-danger')) { restoreDraft(d); return; }
+        showBanner(d, true); return;
+      }
+    }
+    if (d && hasContent(d)) showBanner(d, false);
+  }
+  var autoSave = debounce(saveDraft, 600);
+  form.addEventListener('input', autoSave);
+  form.addEventListener('change', autoSave);
+  body.addEventListener('click', function (e) { if (e.target.closest('[data-role="remove"]')) autoSave(); });
+  listEl.addEventListener('mousedown', function () { setTimeout(autoSave, 50); });
+
+  // Mode edit faktur: isi form dari faktur yang ada.
+  var EDIT_ITEMS = <?= json_encode($editItems ?: [], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>;
+  EDIT_ITEMS.forEach(function (it) {
+    addPart({ id: it.id, kode: it.kode, nama: it.nama, stok: it.stok == null ? '' : it.stok, harga_beli: 0 },
+            { qty: it.qty, harga: parseFloat(it.harga_beli) || 0, rak: it.rak || '', silent: true });
+  });
+  initDraft();
   recalc();
 })();
 </script>

@@ -125,3 +125,119 @@ function delete_purchase_invoice(PDO $db, int $pid): ?string {
     }
     return null;
 }
+
+/**
+ * Tarik kembali stok masuk dari rak asalnya (dipakai saat EDIT faktur).
+ * Bila rak asal tidak ada / stoknya tidak cukup (sudah terpakai), jatuh ke
+ * logika pengurangan standar (Rak Utama dulu, lalu rak lain).
+ */
+function purchase_rack_reverse(PDO $db, int $part_id, string $nama_rak, int $jumlah, int $uid, string $ket): void {
+    if ($jumlah <= 0) return;
+    $p = $db->prepare("SELECT multi_rak_aktif FROM parts WHERE id=?"); $p->execute([$part_id]);
+    if ((int)$p->fetchColumn() !== 1) return; // bukan multi-rak: cukup parts.stok
+    $nama_rak = trim($nama_rak);
+    if ($nama_rak !== '' && $nama_rak !== RAK_UTAMA_KEY) {
+        $r = $db->prepare("SELECT id, stok FROM part_racks WHERE part_id=? AND nama_rak=? FOR UPDATE");
+        $r->execute([$part_id, $nama_rak]);
+        $row = $r->fetch(PDO::FETCH_ASSOC);
+        if ($row && (int)$row['stok'] >= $jumlah) {
+            $db->prepare("UPDATE part_racks SET stok = stok - ? WHERE id=?")->execute([$jumlah, $row['id']]);
+            return;
+        }
+    } else {
+        $u = rack_get_or_create_utama($db, $part_id);
+        if ((int)$u['stok'] >= $jumlah) {
+            $db->prepare("UPDATE part_racks SET stok = stok - ? WHERE id=?")->execute([$jumlah, $u['id']]);
+            return;
+        }
+    }
+    rack_deduct_for_keluar($db, $part_id, $jumlah, $uid, $ket);
+}
+
+/**
+ * EDIT faktur supplier yang sudah jadi (khusus admin).
+ *  - Stok dikoreksi dengan SELISIH (tambah/kurang) per sparepart, atomik dalam 1 transaksi.
+ *  - Ditolak bila koreksi membuat stok minus (barang sudah terjual) -> tidak ada yang berubah.
+ *  - Nomor faktur (PBL-...) & tanggal input asli tetap; riwayat stok faktur ditulis ulang.
+ *  - Hutang disinkronkan ulang (pembayaran/cicilan yang sudah masuk tetap dipertahankan).
+ * $head: supplier_id, no_sup, tgl, jt, status, catatan, upd_hb. $lines: [['part'=>[id,kode,nama],'qty','hb','sub','rak'],...]
+ * Return null bila sukses, atau string pesan galat. Panggil di luar transaksi DB.
+ */
+function update_purchase_invoice(PDO $db, int $pid, array $head, array $lines): ?string {
+    if (!$lines) return 'Faktur harus memiliki minimal satu sparepart.';
+    $uid = (int)(current_user()['id'] ?? 0);
+    try {
+        $db->beginTransaction();
+        $st = $db->prepare("SELECT * FROM supplier_invoices WHERE id=? FOR UPDATE");
+        $st->execute([$pid]);
+        $inv = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$inv) { $db->rollBack(); return 'Faktur tidak ditemukan.'; }
+
+        $it = $db->prepare("SELECT part_id, kode, nama, qty, rak FROM supplier_invoice_items WHERE invoice_id=? ORDER BY id");
+        $it->execute([$pid]);
+        $old = $it->fetchAll(PDO::FETCH_ASSOC);
+
+        // Net per sparepart: stok akhir = stok - lama + baru, tidak boleh minus.
+        $net = [];
+        foreach ($old as $o) {
+            if (empty($o['part_id'])) { $db->rollBack(); return 'Faktur ini memuat baris tanpa data sparepart (sparepart sudah dihapus) sehingga tidak bisa diedit.'; }
+            $net[(int)$o['part_id']] = ($net[(int)$o['part_id']] ?? 0) - (int)$o['qty'];
+        }
+        foreach ($lines as $ln) $net[(int)$ln['part']['id']] = ($net[(int)$ln['part']['id']] ?? 0) + $ln['qty'];
+        ksort($net); // urutan kunci tetap -> hindari deadlock
+        $ps = $db->prepare("SELECT stok, kode, nama FROM parts WHERE id=? FOR UPDATE");
+        foreach ($net as $partId => $delta) {
+            $ps->execute([$partId]);
+            $p = $ps->fetch(PDO::FETCH_ASSOC);
+            if (!$p) { $db->rollBack(); return 'Salah satu sparepart pada faktur sudah tidak ada di data sparepart.'; }
+            if ($delta < 0 && (int)$p['stok'] + $delta < 0) {
+                $db->rollBack();
+                return "Koreksi ditolak: stok {$p['kode']} - {$p['nama']} tinggal {$p['stok']}, sedangkan koreksi mengurangi " . (-$delta) . " unit (sebagian sudah terjual). Faktur tidak diubah.";
+            }
+        }
+
+        $ket = 'Faktur ' . $inv['no_faktur'] . ($head['no_sup'] !== '' ? ' (No. supplier: ' . $head['no_sup'] . ')' : '') . ' [diedit]';
+        $insItem = $db->prepare("INSERT INTO supplier_invoice_items (invoice_id, part_id, kode, nama, qty, harga_beli, subtotal, rak) VALUES (?,?,?,?,?,?,?,?)");
+        $insMv   = $db->prepare("INSERT INTO stock_movements (part_id, tipe, jumlah, supplier_id, ref_type, ref_id, keterangan, created_at) VALUES (?,?,?,?,?,?,?,?)");
+
+        // 1) Terapkan isi BARU (tambah dulu agar stok/rak tidak sempat negatif)
+        $total = 0.0;
+        foreach ($lines as $ln) {
+            $pt = $ln['part']; $total += $ln['sub'];
+            $db->prepare("UPDATE parts SET stok = stok + ? WHERE id=?")->execute([$ln['qty'], $pt['id']]);
+            rack_receive_masuk($db, (int)$pt['id'], $ln['rak'], $ln['qty']);
+        }
+        // 2) Tarik kembali isi LAMA
+        foreach ($old as $o) {
+            $db->prepare("UPDATE parts SET stok = stok - ? WHERE id=?")->execute([(int)$o['qty'], $o['part_id']]);
+            purchase_rack_reverse($db, (int)$o['part_id'], (string)$o['rak'], (int)$o['qty'], $uid, 'Koreksi faktur ' . $inv['no_faktur']);
+        }
+        // 3) Tulis ulang item & riwayat stok faktur (tanggal riwayat tetap tanggal input asli)
+        $db->prepare("DELETE FROM supplier_invoice_items WHERE invoice_id=?")->execute([$pid]);
+        $db->prepare("DELETE FROM stock_movements WHERE ref_type='pembelian' AND ref_id=?")->execute([$pid]);
+        foreach ($lines as $ln) {
+            $pt = $ln['part'];
+            $insItem->execute([$pid, $pt['id'], $pt['kode'], $pt['nama'], $ln['qty'], $ln['hb'], $ln['sub'], $ln['rak']]);
+            if (!empty($head['upd_hb']) && $ln['hb'] > 0) $db->prepare("UPDATE parts SET harga_beli=? WHERE id=?")->execute([$ln['hb'], $pt['id']]);
+            $insMv->execute([$pt['id'], 'masuk', $ln['qty'], $head['supplier_id'], 'pembelian', $pid, $ket, $inv['created_at']]);
+        }
+        // 4) Header faktur + hutang
+        $status = ($total <= 0) ? 'lunas' : $head['status'];
+        $db->prepare("UPDATE supplier_invoices SET no_faktur_supplier=?, supplier_id=?, tgl=?, jatuh_tempo=?, total=?, status_bayar=?, catatan=? WHERE id=?")
+           ->execute([$head['no_sup'], $head['supplier_id'], $head['tgl'], $head['jt'], $total, $status, $head['catatan'], $pid]);
+        sync_purchase_debt($db, $pid);
+        $db->commit();
+        if (function_exists('app_log')) app_log('purchase', 'Faktur ' . $inv['no_faktur'] . ' diedit oleh ' . ((string)(current_user()['nama'] ?? '?')) . ': total ' . $inv['total'] . ' -> ' . $total);
+    } catch (\Throwable $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        return 'Gagal menyimpan koreksi faktur: ' . $e->getMessage();
+    }
+    return null;
+}
+
+/** Tandai ke browser bahwa faktur dari draf tertentu SUDAH tersimpan (cookie dibaca JS untuk menghapus draf). */
+function purchase_mark_draft_done(): void {
+    $t = preg_replace('/[^A-Za-z0-9]/', '', (string)($_POST['draft_token'] ?? ''));
+    if ($t === '' || headers_sent()) return;
+    setcookie('pbl_done', $t, ['expires' => time() + 2592000, 'path' => '/', 'samesite' => 'Lax', 'secure' => !empty($_SERVER['HTTPS'])]);
+}
