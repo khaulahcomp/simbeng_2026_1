@@ -3,6 +3,12 @@ $db = db();
 require_once __DIR__ . '/../includes/purchase.php';
 $action = $_POST['action'] ?? '';
 
+// Tab "Purchase Order" (khusus admin) - seluruh logika ada di includes/po_tab.php.
+if (($_GET['tab'] ?? '') === 'po' || strncmp((string)$action, 'po_', 3) === 0) {
+    require __DIR__ . '/../includes/po_tab.php';
+    return;
+}
+
 if ($action === 'save') {
     $id = (int)($_POST['id'] ?? 0);
     $data = [trim($_POST['nama']), trim($_POST['telepon']), trim($_POST['email']), trim($_POST['alamat']), trim($_POST['keterangan'])];
@@ -21,8 +27,12 @@ if ($action === 'delete') {
     $sid_del = (int)$_POST['id'];
     $ci = $db->prepare("SELECT COUNT(*) FROM supplier_invoices WHERE supplier_id=?");
     $ci->execute([$sid_del]);
+    $po_cnt = 0; // Purchase Order juga menahan penghapusan supplier (tabel bisa belum ada).
+    try { $pc = $db->prepare("SELECT COUNT(*) FROM purchase_orders WHERE supplier_id=?"); $pc->execute([$sid_del]); $po_cnt = (int)$pc->fetchColumn(); } catch (\Throwable $e) {}
     if ((int)$ci->fetchColumn() > 0) {
         set_flash('danger', 'Supplier tidak bisa dihapus karena sudah memiliki faktur tagihan.');
+    } elseif ($po_cnt > 0) {
+        set_flash('danger', 'Supplier tidak bisa dihapus karena sudah memiliki Purchase Order.');
     } else {
         try {
             $db->prepare("DELETE FROM suppliers WHERE id=?")->execute([$sid_del]);
@@ -85,6 +95,12 @@ if (isset($_GET['edit'])) {
     $edit = $s->fetch(PDO::FETCH_ASSOC);
 }
 ?>
+<?php if ($is_admin_user): ?>
+<ul class="nav nav-tabs mb-3" data-testid="supplier-tabs">
+  <li class="nav-item"><a class="nav-link active" href="index.php?page=suppliers" data-testid="tab-supplier"><i class="bi bi-truck me-1"></i>Data Supplier &amp; Faktur Tagihan</a></li>
+  <li class="nav-item"><a class="nav-link" href="index.php?page=suppliers&amp;tab=po" data-testid="tab-po"><i class="bi bi-clipboard-check me-1"></i>Purchase Order <span class="badge rounded-pill text-bg-light border small">admin</span></a></li>
+</ul>
+<?php endif; ?>
 <div class="row g-3">
   <div class="col-lg-4">
     <div class="card table-card"><div class="card-body">
