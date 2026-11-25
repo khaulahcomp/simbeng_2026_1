@@ -76,7 +76,7 @@ function rekap_sparepart(string $dari, string $sampai, array $f): array {
 function rekap_sparepart_rincian(string $dari, string $sampai, array $f, ?int $part_id = null): array {
     [$where, $params] = _rekap_sparepart_where($dari, $sampai, $f);
     if ($part_id !== null) { $where .= " AND ti.part_id = ?"; $params[] = $part_id; }
-    $sql = "SELECT ti.part_id, ti.transaction_id, t.no_nota, t.created_at, c.nama AS customer_nama,
+    $sql = "SELECT ti.part_id, ti.transaction_id, t.no_nota, t.created_at, t.status_bayar, c.nama AS customer_nama,
                 COALESCE(p.kode, '') AS kode, COALESCE(p.nama, ti.nama) AS nama,
                 ti.qty, ti.harga, ti.diskon, ti.subtotal
             FROM transaction_items ti

@@ -249,13 +249,15 @@ if ($type === 'parts') {
     $rincian = rekap_sparepart_rincian($dari, $sampai, $f);
     $det  = '<h3 style="margin:20px 0 6px">Rincian Faktur per Sparepart</h3>';
     $det .= '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px">';
-    $det .= '<thead><tr style="background:#1e2a38;color:#fff"><th>Kode</th><th>Nama Sparepart</th><th>No. Nota</th><th>Tanggal</th><th>Pelanggan</th><th>Qty</th><th>Harga</th><th>Diskon</th><th>Subtotal</th></tr></thead><tbody>';
-    if (!$rincian) $det .= '<tr><td colspan="9" align="center">Tidak ada data.</td></tr>';
+    $det .= '<thead><tr style="background:#1e2a38;color:#fff"><th>Kode</th><th>Nama Sparepart</th><th>No. Nota</th><th>Tanggal</th><th>Pelanggan</th><th>Qty</th><th>Harga</th><th>Diskon</th><th>Subtotal</th><th>Status Bayar</th></tr></thead><tbody>';
+    if (!$rincian) $det .= '<tr><td colspan="10" align="center">Tidak ada data.</td></tr>';
     foreach ($rincian as $d) {
+        $belum = (($d['status_bayar'] ?? 'lunas') === 'belum');
         $det .= '<tr><td>' . esc($d['kode'] !== '' ? $d['kode'] : '-') . '</td><td>' . esc($d['nama']) . '</td><td>' . esc($d['no_nota'])
               . '</td><td>' . esc(lokal($d['created_at'])) . '</td><td>' . esc($d['customer_nama'] ?? '-')
               . '</td><td align="right">' . (int)$d['qty'] . '</td><td align="right">' . esc(rupiah($d['harga']))
-              . '</td><td align="right">' . esc(rupiah($d['diskon'])) . '</td><td align="right">' . esc(rupiah($d['subtotal'])) . '</td></tr>';
+              . '</td><td align="right">' . esc(rupiah($d['diskon'])) . '</td><td align="right">' . esc(rupiah($d['subtotal']))
+              . '</td><td' . ($belum ? ' style="background:#ffe0e8;color:#b4234a;font-weight:bold"' : '') . '>' . ($belum ? 'BELUM LUNAS' : 'Lunas') . '</td></tr>';
     }
     $det .= '</tbody></table>';
     $det .= '<p style="font-size:11px;color:#666;margin-top:8px">Total sudah dipotong diskon per item; diskon nota (keseluruhan faktur) tidak dibagi ke sparepart.</p>';
