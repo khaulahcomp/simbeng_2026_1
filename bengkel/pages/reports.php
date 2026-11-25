@@ -3,7 +3,24 @@
 // Halaman Rekap & Laporan Transaksi
 // Filter: harian / mingguan / bulanan / tahunan / rentang tanggal
 // Unduh: PDF (cetak), Excel (.xls), Word (.doc) via export.php
+// Tab "Per Sparepart" (rekap penjualan per kode sparepart) ada di
+// pages/reports_sparepart.php - hanya membaca data, tanpa perubahan skema.
 // ============================================================
+$report_tab = (($_GET['tab'] ?? '') === 'sparepart') ? 'sparepart' : 'transaksi';
+// Tautan tab membawa filter periode yang sedang aktif.
+$report_tab_qs = array_intersect_key($_GET, array_flip(['periode', 'tanggal', 'bulan', 'tahun', 'dari', 'sampai']));
+$report_tab_url = function (string $tab) use ($report_tab_qs): string {
+    $qs = array_merge(['page' => 'reports'], $report_tab_qs, $tab === 'sparepart' ? ['tab' => 'sparepart'] : []);
+    return 'index.php?' . http_build_query($qs);
+};
+?>
+<ul class="nav nav-tabs mb-3" data-testid="report-tabs">
+  <li class="nav-item"><a class="nav-link <?= $report_tab === 'transaksi' ? 'active' : '' ?>" href="<?= esc($report_tab_url('transaksi')) ?>" data-testid="report-tab-transaksi"><i class="bi bi-receipt me-1"></i>Transaksi</a></li>
+  <li class="nav-item"><a class="nav-link <?= $report_tab === 'sparepart' ? 'active' : '' ?>" href="<?= esc($report_tab_url('sparepart')) ?>" data-testid="report-tab-sparepart"><i class="bi bi-box-seam me-1"></i>Per Sparepart</a></li>
+</ul>
+<?php
+if ($report_tab === 'sparepart') { require __DIR__ . '/reports_sparepart.php'; return; }
+
 [$periode, $dari, $sampai, $label] = resolve_periode();
 $rows = laporan_transaksi($dari, $sampai);
 $tot_jasa = array_sum(array_column($rows, 'total_jasa'));

@@ -140,7 +140,10 @@ function bengkel_nav_items(): array {
         ['charts', 'index.php?page=charts', 'bi-bar-chart', 'Grafik Pelanggan', false],
         ['customers', 'index.php?page=customers', 'bi-people', 'Pelanggan', false],
         ['parts', 'index.php?page=parts', 'bi-box-seam', 'Sparepart', false],
-        ['parts_bulk', 'index.php?page=parts_bulk', 'bi-pencil-square', 'Lengkapi Harga', false],
+        // Menu "Lengkapi Harga" (parts_bulk) DISEMBUNYIKAN, tidak dihapus: halaman & kodenya tetap
+        // ada dan masih bisa dibuka lewat index.php?page=parts_bulk. Untuk menampilkan lagi,
+        // hapus tanda // di awal baris berikut.
+        // ['parts_bulk', 'index.php?page=parts_bulk', 'bi-pencil-square', 'Lengkapi Harga', false],
         ['categories', 'index.php?page=categories', 'bi-tags', 'Kategori', false],
         ['stock', 'index.php?page=stock', 'bi-box-arrow-in-down', 'Stok Masuk', false],
         ['racks', 'index.php?page=racks', 'bi-diagram-3', 'Transfer Rak', false],
