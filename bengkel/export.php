@@ -14,7 +14,7 @@ init_db();
 $type   = $_GET['type'] ?? 'transactions';
 $format = $_GET['format'] ?? 'xls';
 // Whitelist parameter agar nilai tak dikenal tidak diproses sembarangan
-if (!in_array($type, ['transactions', 'parts', 'stock', 'finance', 'debts', 'customers', 'template'], true)) $type = 'transactions';
+if (!in_array($type, ['transactions', 'parts', 'stock', 'finance', 'debts', 'customers', 'template', 'parts_sales'], true)) $type = 'transactions';
 if (!in_array($format, ['xls', 'doc', 'pdf'], true)) $format = 'pdf';
 [, $dari, $sampai, $label] = resolve_periode();
 
@@ -225,6 +225,43 @@ if ($type === 'parts') {
     }
     $footer = ['', 'TOTAL ' . ($no - 1) . ' pelanggan', '', '', ''];
     $fname = 'daftar_pelanggan_' . date('Ymd');
+} elseif ($type === 'parts_sales') {
+    // ---- Rekap Penjualan per Sparepart (tab "Per Sparepart" di Rekap & Laporan) ----
+    // Hanya membaca data. Ringkasan per kode di tabel utama, rincian faktur di bawahnya.
+    require_once __DIR__ . '/includes/rekap_sparepart.php';
+    $f = rekap_sparepart_filter();
+    $rows = rekap_sparepart($dari, $sampai, $f);
+    $filterLine = [];
+    if ($f['kategori'] !== '') $filterLine[] = 'Kategori: ' . $f['kategori'];
+    if ($f['q'] !== '')        $filterLine[] = 'Pencarian: "' . $f['q'] . '"';
+    $judul = 'Rekap Penjualan Sparepart';
+    $subjudul = 'Periode: ' . $label . ($filterLine ? ' · ' . implode(' · ', $filterLine) : '') . ' · Dicetak: ' . date('d/m/Y H:i');
+    $headers = ['No', 'Kode', 'Nama Sparepart', 'Kategori', 'Jumlah Faktur', 'Qty', 'Harga Rata-rata', 'Diskon', 'Total'];
+    $data = []; $no = 1; $tq = 0; $td = 0; $tt = 0;
+    foreach ($rows as $r) {
+        $tq += (int)$r['qty']; $td += (float)$r['diskon']; $tt += (float)$r['total'];
+        $data[] = [$no++, $r['kode'] !== '' ? $r['kode'] : '-', $r['nama'], $r['kategori'] !== '' ? $r['kategori'] : '-',
+                   (int)$r['jml_faktur'], (int)$r['qty'], rupiah($r['harga_rata']), rupiah($r['diskon']), rupiah($r['total'])];
+    }
+    $footer = ['', 'TOTAL (' . count($rows) . ' sparepart)', '', '', '', (string)$tq, '', rupiah($td), rupiah($tt)];
+    $fname = 'rekap_penjualan_sparepart_' . $dari . '_sd_' . $sampai;
+
+    $rincian = rekap_sparepart_rincian($dari, $sampai, $f);
+    $det  = '<h3 style="margin:20px 0 6px">Rincian Faktur per Sparepart</h3>';
+    $det .= '<table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px">';
+    $det .= '<thead><tr style="background:#1e2a38;color:#fff"><th>Kode</th><th>Nama Sparepart</th><th>No. Nota</th><th>Tanggal</th><th>Pelanggan</th><th>Qty</th><th>Harga</th><th>Diskon</th><th>Subtotal</th><th>Status Bayar</th></tr></thead><tbody>';
+    if (!$rincian) $det .= '<tr><td colspan="10" align="center">Tidak ada data.</td></tr>';
+    foreach ($rincian as $d) {
+        $belum = (($d['status_bayar'] ?? 'lunas') === 'belum');
+        $det .= '<tr><td>' . esc($d['kode'] !== '' ? $d['kode'] : '-') . '</td><td>' . esc($d['nama']) . '</td><td>' . esc($d['no_nota'])
+              . '</td><td>' . esc(lokal($d['created_at'])) . '</td><td>' . esc($d['customer_nama'] ?? '-')
+              . '</td><td align="right">' . (int)$d['qty'] . '</td><td align="right">' . esc(rupiah($d['harga']))
+              . '</td><td align="right">' . esc(rupiah($d['diskon'])) . '</td><td align="right">' . esc(rupiah($d['subtotal']))
+              . '</td><td' . ($belum ? ' style="background:#ffe0e8;color:#b4234a;font-weight:bold"' : '') . '>' . ($belum ? 'BELUM LUNAS' : 'Lunas') . '</td></tr>';
+    }
+    $det .= '</tbody></table>';
+    $det .= '<p style="font-size:11px;color:#666;margin-top:8px">Total sudah dipotong diskon per item; diskon nota (keseluruhan faktur) tidak dibagi ke sparepart.</p>';
+    $extra_sheets[] = ['name' => 'Rincian Faktur', 'html' => $det];
 } elseif ($type === 'template') {
     // ---- Template Excel siap-isi untuk Impor Harga Sparepart ----
     $format = 'xls';
