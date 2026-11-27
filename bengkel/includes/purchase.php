@@ -118,6 +118,8 @@ function delete_purchase_invoice(PDO $db, int $pid): ?string {
         $db->prepare("DELETE FROM stock_movements WHERE ref_type='pembelian' AND ref_id=?")->execute([$pid]);
         $db->prepare("DELETE FROM debts WHERE purchase_id=?")->execute([$pid]); // debt_payments ikut (CASCADE)
         $db->prepare("DELETE FROM supplier_invoices WHERE id=?")->execute([$pid]); // item ikut (CASCADE)
+        // Lepas tautan ke Purchase Order (bila ada) agar PO kembali menunggu sisa barang.
+        try { $db->prepare("DELETE FROM purchase_order_receipts WHERE invoice_id=?")->execute([$pid]); } catch (\Throwable $e) { /* tabel PO belum dibuat */ }
         $db->commit();
     } catch (\Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();

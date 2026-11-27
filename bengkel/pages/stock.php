@@ -3,6 +3,7 @@ $db = db();
 $action = $_POST['action'] ?? '';
 
 require_once __DIR__ . '/../includes/purchase.php';
+require_once __DIR__ . '/../includes/purchase_order.php'; // Terima Barang dari Purchase Order
 
 // ---- Barang masuk dari supplier = FAKTUR TAGIHAN (banyak item sekaligus) ----
 // Fitur "Barang Keluar (manual)" sudah dihapus (tercover oleh data penjualan).
@@ -14,13 +15,29 @@ if ($action === 'save_masuk') {
     $status  = (($_POST['status_bayar'] ?? 'belum') === 'lunas') ? 'lunas' : 'belum';
     $catatan = mb_substr(trim($_POST['catatan'] ?? ''), 0, 500);
     $upd_hb  = !empty($_POST['update_harga_beli']);
+    // Terima Barang dari Purchase Order (opsional, khusus admin): faktur ini dihubungkan ke PO.
+    $po_id   = (int)($_POST['po_id'] ?? 0);
+    $po_row  = null;
+    if ($po_id > 0) {
+        require_admin();
+        po_ensure_schema($db);
+        $po_row = po_get($db, $po_id);
+        if (!$po_row || $po_row['status'] !== 'open') {
+            set_flash('danger', 'Purchase Order tidak ditemukan atau sudah ditutup.');
+            header('Location: index.php?page=suppliers&tab=po'); exit;
+        }
+        if ((int)$po_row['supplier_id'] !== $supplier_id) {
+            set_flash('danger', 'Supplier harus sama dengan supplier pada ' . $po_row['no_po'] . '.');
+            header('Location: index.php?page=stock&from_po=' . $po_id); exit;
+        }
+    }
 
     $sp = $db->prepare("SELECT id, nama FROM suppliers WHERE id=?");
     $sp->execute([$supplier_id]);
     $sup = $sp->fetch(PDO::FETCH_ASSOC);
     if (!$sup) {
         set_flash('danger', 'Pilih supplier terlebih dahulu.');
-        header('Location: index.php?page=stock'); exit;
+        header('Location: index.php?page=stock' . ($po_id ? '&from_po=' . $po_id : '')); exit;
     }
 
     $pids  = (array)($_POST['part_id'] ?? []);
@@ -41,7 +58,7 @@ if ($action === 'save_masuk') {
     }
     if (!$lines) {
         set_flash('danger', 'Tambahkan minimal satu sparepart (pilih dari hasil pencarian) dengan jumlah minimal 1.');
-        header('Location: index.php?page=stock'); exit;
+        header('Location: index.php?page=stock' . ($po_id ? '&from_po=' . $po_id : '')); exit;
     }
 
     try {
@@ -64,16 +81,22 @@ if ($action === 'save_masuk') {
             rack_receive_masuk($db, (int)$pt['id'], $ln['rak'], $ln['qty']);
         }
         sync_purchase_debt($db, $inv_id); // BELUM LUNAS -> otomatis jadi hutang
+        if ($po_row) po_link_invoice($db, $po_id, $inv_id); // satu transaksi: gagal = tidak ada yang tersimpan
         $db->commit();
         purchase_mark_draft_done();
+        $po_msg = '';
+        if ($po_row) {
+            $ps = po_summary($db, $po_id);
+            $po_msg = ' ' . $po_row['no_po'] . ($ps['key'] === 'selesai' ? ' selesai (semua barang diterima).' : ' tercatat diterima sebagian.');
+        }
         set_flash('success', "Faktur $no_faktur tersimpan. Stok " . count($lines) . " sparepart bertambah"
-            . ($status === 'belum' ? ' dan tagihan tercatat di Hutang Piutang.' : '.'));
+            . ($status === 'belum' ? ' dan tagihan tercatat di Hutang Piutang.' : '.') . $po_msg);
         header('Location: index.php?page=purchase_receipt&id=' . $inv_id); exit;
     } catch (\Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
         set_flash('danger', 'Gagal menyimpan faktur barang masuk: ' . $e->getMessage());
     }
-    header('Location: index.php?page=stock'); exit;
+    header('Location: index.php?page=stock' . ($po_id ? '&from_po=' . $po_id : '')); exit;
 }
 
 // ---- EDIT faktur supplier yang sudah jadi (khusus admin): kembali ke form input untuk koreksi ----
@@ -128,6 +151,32 @@ if (isset($_GET['edit_invoice'])) {
     $editItems = $eit->fetchAll(PDO::FETCH_ASSOC);
 }
 $draftUid = (int)(current_user()['id'] ?? 0);
+
+// Terima Barang dari Purchase Order: form Stok Masuk diisi otomatis dari sisa PO.
+$fromPo = null;
+if (!$editInv && isset($_GET['from_po'])) {
+    require_admin();
+    po_ensure_schema($db);
+    $fps = po_summary($db, (int)$_GET['from_po']);
+    $fromPo = $fps['po'];
+    if (!$fromPo || $fromPo['status'] !== 'open' || $fps['key'] === 'selesai') {
+        set_flash('warning', 'Purchase Order tidak ditemukan, sudah selesai, atau sudah ditutup.');
+        header('Location: index.php?page=suppliers&tab=po'); exit;
+    }
+    foreach ($fps['items'] as $it) {
+        if (!$it['part_id'] || $it['sisa'] <= 0 || $it['part_stok'] === null) continue;
+        $editItems[] = ['id' => (int)$it['part_id'], 'kode' => $it['part_kode'], 'nama' => $it['part_nama'], 'qty' => $it['sisa'],
+            'harga_beli' => (float)$it['part_harga_beli'], 'rak' => '', 'stok' => (int)$it['part_stok']];
+    }
+    if (!$editItems) {
+        set_flash('warning', 'Tidak ada part di ' . $fromPo['no_po'] . ' yang bisa diterima. Hubungkan part manual ke database Sparepart terlebih dahulu.');
+        header('Location: index.php?page=suppliers&tab=po&link=' . (int)$fromPo['id']); exit;
+    }
+    $fromPoSkipped = $fps['manual_open'];
+    // Ada part yang harga belinya masih 0 (mis. part baru dari input manual PO) -> sarankan perbarui harga beli.
+    $fromPoNeedHb = false;
+    foreach ($editItems as $ei_) if ((float)$ei_['harga_beli'] <= 0) $fromPoNeedHb = true;
+}
 
 // Riwayat pergerakan stok: filter cari (kode/nama part) + jenis pergerakan + jumlah per halaman + pagination
 $q = trim($_GET['q'] ?? '');
@@ -226,7 +275,16 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
         <a href="index.php?page=suppliers&amp;supplier_id=<?= (int)$editInv['supplier_id'] ?>#faktur" class="ms-1">Batal &amp; kembali</a>
       </div>
       <?php endif; ?>
-      <form method="post" id="purchaseForm" data-testid="purchase-form" autocomplete="off" data-draft-key="purchase_draft_v1_u<?= $draftUid ?><?= $editInv ? '_edit' . (int)$editInv['id'] : '' ?>">
+      <?php if ($fromPo): ?>
+      <div class="alert alert-primary small py-2" data-testid="purchase-from-po">
+        <i class="bi bi-clipboard-check me-1"></i><strong>Terima barang dari <?= esc($fromPo['no_po']) ?></strong> (<?= esc($fromPo['supplier_nama'] ?? '') ?>, <?= _valid_date($fromPo['tgl']) ? date('d/m/Y', strtotime($fromPo['tgl'])) : '' ?>).
+        Daftar di bawah sudah terisi sesuai sisa PO. Ubah <strong>jumlah</strong> bila barang yang datang kurang, hapus baris yang belum datang, lalu isi harga beli.
+        Penyimpanan sama persis dengan Stok Masuk biasa.<?php if (!empty($fromPoSkipped)): ?> <span class="text-danger"><?= (int)$fromPoSkipped ?> part manual dilewati (belum terhubung ke database Sparepart).</span><?php endif; ?>
+        <a href="index.php?page=suppliers&amp;tab=po&amp;open=<?= (int)$fromPo['id'] ?>" class="ms-1">Batal &amp; kembali ke PO</a>
+      </div>
+      <?php endif; ?>
+      <form method="post" id="purchaseForm" data-testid="purchase-form" autocomplete="off" data-draft-key="purchase_draft_v1_u<?= $draftUid ?><?= $editInv ? '_edit' . (int)$editInv['id'] : '' ?><?= $fromPo ? '_po' . (int)$fromPo['id'] : '' ?>">
+        <?php if ($fromPo): ?><input type="hidden" name="po_id" value="<?= (int)$fromPo['id'] ?>"><?php endif; ?>
         <input type="hidden" name="action" value="<?= $editInv ? 'update_masuk' : 'save_masuk' ?>">
         <?php if ($editInv): ?><input type="hidden" name="invoice_id" value="<?= (int)$editInv['id'] ?>"><?php endif; ?>
         <input type="hidden" name="draft_token" id="purchaseDraftToken" value="">
@@ -234,8 +292,12 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
           <div class="col-12 col-md-4">
             <label class="form-label small mb-1">Supplier <span class="text-danger">*</span></label>
             <select name="supplier_id" class="form-select form-select-sm" required data-testid="purchase-supplier">
+              <?php if ($fromPo): // supplier dikunci sesuai PO ?>
+              <option value="<?= (int)$fromPo['supplier_id'] ?>" selected><?= esc($fromPo['supplier_nama'] ?? '') ?></option>
+              <?php else: ?>
               <option value="">- Pilih supplier -</option>
               <?php foreach ($suppliers as $s_): ?><option value="<?= $s_['id'] ?>" <?= ($editInv && (int)$editInv['supplier_id'] === (int)$s_['id']) ? 'selected' : '' ?>><?= esc($s_['nama']) ?></option><?php endforeach; ?>
+              <?php endif; ?>
             </select>
           </div>
           <div class="col-12 col-md-3">
@@ -274,7 +336,7 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
         <div class="row g-2 align-items-end">
           <div class="col-12 col-md-5">
             <label class="form-label small mb-1">Catatan</label>
-            <input type="text" name="catatan" class="form-control form-control-sm" maxlength="500" placeholder="Opsional" value="<?= esc($editInv['catatan'] ?? '') ?>" data-testid="purchase-catatan">
+            <input type="text" name="catatan" class="form-control form-control-sm" maxlength="500" placeholder="Opsional" value="<?= esc($editInv['catatan'] ?? ($fromPo ? 'Dari ' . $fromPo['no_po'] : '')) ?>" data-testid="purchase-catatan">
           </div>
           <div class="col-12 col-md-3">
             <label class="form-label small mb-1 d-block">Status Pembayaran ke Supplier</label>
@@ -291,7 +353,7 @@ $log = $logStmt->fetchAll(PDO::FETCH_ASSOC);
           </div>
         </div>
         <div class="form-check mt-2">
-          <input class="form-check-input" type="checkbox" name="update_harga_beli" value="1" id="updHb" data-testid="purchase-upd-hb">
+          <input class="form-check-input" type="checkbox" name="update_harga_beli" value="1" id="updHb" data-testid="purchase-upd-hb" <?= !empty($fromPoNeedHb) ? 'checked' : '' ?>>
           <label class="form-check-label small" for="updHb">Perbarui harga beli di data sparepart sesuai faktur ini <span class="text-muted">(memengaruhi perhitungan laba)</span></label>
         </div>
         <button class="btn btn-success w-100 mt-2" data-testid="purchase-submit"><i class="bi bi-receipt me-1"></i><?= $editInv ? 'Simpan Koreksi Faktur' : 'Simpan &amp; Cetak Faktur Tagihan' ?></button>

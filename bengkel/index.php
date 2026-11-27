@@ -50,6 +50,7 @@ $routes = [
     'warranty_print' => 'Bukti Klaim Garansi',
     'debt_receipt'   => 'Kwitansi Pembayaran',
     'purchase_receipt' => 'Faktur Tagihan Supplier',
+    'po_print'       => 'Cetak Purchase Order',
     'users'          => 'Manajemen Pengguna',
     'settings'       => 'Pengaturan',
     'notes'          => 'Catatan',
@@ -57,7 +58,7 @@ $routes = [
 if (!isset($routes[$page])) $page = 'dashboard';
 
 // Halaman cetak tampil tanpa sidebar (bare)
-$bare = in_array($page, ['receipt', 'warranty_print', 'debt_receipt', 'purchase_receipt'], true);
+$bare = in_array($page, ['receipt', 'warranty_print', 'debt_receipt', 'purchase_receipt', 'po_print'], true);
 
 $title = $routes[$page];
 if (!$bare) require __DIR__ . '/includes/header.php';
